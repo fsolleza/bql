@@ -132,28 +132,30 @@ int handle_sys_enter(struct sys_enter_ctx *ctx) {
     int zero = 0;
     uint64_t time = bpf_ktime_get_ns();
     int syscall_number = ctx->syscall_number;
+    
+    if (syscall_number == 17 && pid == target_pid) {
+    	struct syscall_event e = {0};
+    	e.pid = pid;
+    	e.tid = tid;
+    	e.duration = 0 ;
+    	e.syscall_number = syscall_number;
+    	e.start_time = time;
+	
+    	struct syscall_event_buffer *buffer = bpf_map_lookup_elem(&syscall_buffers, &zero);
+    	if (!buffer) {
+        	bpf_printk("ERROR GETTING BUFFER");
+        	return 0;
+   	 }
 
-    struct syscall_event e = {0};
-    e.pid = pid;
-    e.tid = tid;
-    e.duration = 0 ;
-    e.syscall_number = syscall_number;
-    e.start_time = time;
+    	if (buffer->length < 256) {
+       		buffer->buffer[buffer->length] = e;
+        	buffer->length += 1;
+   	 }
 
-    struct syscall_event_buffer *buffer = bpf_map_lookup_elem(&syscall_buffers, &zero);
-    if (!buffer) {
-        bpf_printk("ERROR GETTING BUFFER");
-        return 0;
-    }
-
-    if (buffer->length < 256) {
-        buffer->buffer[buffer->length] = e;
-        buffer->length += 1;
-    }
-
-    if (buffer->length == 256) {
-        bpf_perf_event_output((void *)ctx, &perf_buffer, BPF_F_CURRENT_CPU, buffer, sizeof(*buffer));
-        buffer->length = 0;
+    	if (buffer->length == 256) {
+        	bpf_perf_event_output((void *)ctx, &perf_buffer, BPF_F_CURRENT_CPU, buffer, sizeof(*buffer));
+        	buffer->length = 0;
+    	}
     }
 
     return 0;

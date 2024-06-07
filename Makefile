@@ -13,7 +13,7 @@ endif
 ## VARIABLES ##
 ###############
 
-path_base    := /nvme/data/tmp
+path_base    := /nvme/agarcia
 path_bg_pids := tmp/pids                  # backgrounded pids found here
 
 # Rocksdb App parameters
