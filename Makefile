@@ -13,19 +13,20 @@ endif
 ## VARIABLES ##
 ###############
 
-path_base    := /nvme/agarcia
-path_bg_pids := tmp/pids                  # backgrounded pids found here
+PATH_BASE    := /nvme/data/tmp
+PATH_BG_PIDS := tmp/pids                  # backgrounded pids found here
 
 # Rocksdb App parameters
-rocksdb_app_threads    := 18
-rocksdb_app_read_ratio := 0.5
-cpus_rocksdb_app       := 30-70
-path_rocksdb           := $(path_base)/bpf-sql/rocksdb-app # rocksdb app writes here
-bin_rocksdb_app        := ./rocksdb-application/target/release/rocksdb-application
 
+ROCKSDB_APP_THREADS    := 18
+ROCKSDB_APP_READ_RATIO := 0.5
+CPUS_ROCKSDB_APP       := 30-70
+PATH_ROCKSDB           := $(PATH_BASE)/bpf-sql/rocksdb-app # rocksdb app writes here
+BIN_ROCKSDB_APP        := ./rocksdb-application/target/release/rocksdb-application
 
-bin_syscall         := ./syscall-latency/target/release/syscall-latency
+# syscall latency application parameters
 
+BIN_SYSCALL            := ./syscall-latency/target/release/syscall-latency
 
 ###############
 ## Functions ##
@@ -36,7 +37,7 @@ pprint := printf "+ %s\n"
 define bg
 	$(shell stty sane)
 	$(shell $(1) > tmp/log-$@ 2>&1 & \
-		echo $@,$$! >> $(path_bg_pids))
+		echo $@,$$! >> $(PATH_BG_PIDS))
 	$(shell stty sane)
 	$(pprint) "Running $@"
 	$(pprint) "Outputting to tmp/log-$@"
@@ -46,20 +47,19 @@ endef
 ## Run Targets ##
 #################
 
-
 .PHONY: rocksdb-application
-rocksdb-application:
+rocksdb-application: tmp-dir
 	$(call bg, \
-		taskset -c $(cpus_rocksdb_app) \
-			$(bin_rocksdb_app) \
-			--threads $(rocksdb_app_threads) \
-			--read-ratio $(rocksdb_app_read_ratio) \
-			--db-path $(path_rocksdb))
+		taskset -c $(CPUS_ROCKSDB_APP) \
+			$(BIN_ROCKSDB_APP) \
+			--threads $(ROCKSDB_APP_THREADS) \
+			--read-ratio $(ROCKSDB_APP_READ_RATIO) \
+			--db-path $(PATH_ROCKSDB))
 
 
 .PHONY: syscall-latency-rocksdb
-syscall-latency-rocksdb: do-sudo
-	$(call bg, sudo $(bin_syscall) --pid $$(pgrep rocksdb-applica))
+syscall-latency-rocksdb: tmp-dir do-sudo
+	$(call bg, sudo $(BIN_SYSCALL) --pid $$(pgrep rocksdb-applica))
 
 ###################
 ## Build targets ##
@@ -105,21 +105,21 @@ clean-code:
 .PHONY: stop
 stop:
 	stty sane
-	test ! -e $(path_bg_pids) && $(pprint) "$(path_bg_pids) does not exist" || true
+	test ! -e $(PATH_BG_PIDS) && $(pprint) "$(PATH_BG_PIDS) does not exist" || true
 
-	test -e $(path_bg_pids) && \
-		test $$(cut $(path_bg_pids) -d, -f2 | wc -l) -eq 0 && \
+	test -e $(PATH_BG_PIDS) && \
+		test $$(cut $(PATH_BG_PIDS) -d, -f2 | wc -l) -eq 0 && \
 		$(pprint) "No pids found" || \
 		true
 
-	test -e $(path_bg_pids) && \
-		test $$(cut $(path_bg_pids) -d, -f2 | wc -l) -gt 0 && \
+	test -e $(PATH_BG_PIDS) && \
+		test $$(cut $(PATH_BG_PIDS) -d, -f2 | wc -l) -gt 0 && \
 		( \
 			$(pprint) "Killing the following pids"; \
-			cat $(path_bg_pids) | xargs $(pprint); \
-			cut $(path_bg_pids) -d, -f2 | xargs kill -9 \
+			cat $(PATH_BG_PIDS) | xargs $(pprint); \
+			cut $(PATH_BG_PIDS) -d, -f2 | xargs kill -9 \
 		) ; \
-		rm -f $(path_bg_pids)
+		rm -f $(PATH_BG_PIDS)
 
 	$(pprint) \
 		"verify no stray processes (make ps)"
@@ -129,7 +129,7 @@ stop:
 
 .PHONY: clean-files
 clean-files:
-	rm -rf $(path_rocksdb)
+	rm -rf $(PATH_ROCKSDB)
 
 .PHONY: ps
 ps:
