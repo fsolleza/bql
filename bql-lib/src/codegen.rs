@@ -10,6 +10,19 @@ pub enum ScalarValue {
 	CString(String),
 }
 
+impl ScalarValue {
+	fn gen_expression(&self) -> String {
+		match self {
+			Self::Null => "null".into(),
+			Self::Float(x) => format!("{}", x),
+			Self::UInt(x) => format!("{}", x),
+			Self::Bool(x) => format!("{}", x),
+			Self::Int(x) => format!("{}", x),
+			Self::CString(x) => x.clone(),
+		}
+	}
+}
+
 #[derive(Clone)]
 pub enum Type {
 	Void,
@@ -37,9 +50,9 @@ impl Type {
 
 	pub fn gen_definition(&self) -> String {
 		match self {
-			Self::Int => "int;".into(),
-			Self::Char => "char;".into(),
-			Self::Void => "void;".into(),
+			Self::Int => "int".into(),
+			Self::Char => "char".into(),
+			Self::Void => "void".into(),
 			Self::Struct(s) => s.gen_definition(),
 			Self::Array(a) => a.gen_definition(),
 			Self::Pointer(p) => p.gen_definition(),
@@ -84,61 +97,192 @@ impl Pointer {
 	}
 
 	pub fn gen_definition(&self) -> String {
-		format!("{} *;", self.typ.gen_signature())
+		format!("{} *", self.typ.gen_signature())
 	}
 }
 
 /// Represents a C expression that returns a value (can return void)
+/// For now, we do not allow nested exprs to simplify things. Assign an expr to
+/// a variable then send the variable into the expr.
 pub enum Expr {
 	ScalarValue(ScalarValue),
 	Variable(Variable),
-	Arithmetic(Box<Arithmetic>),
-	Comparison(Box<Comparison>),
-	FunctionCall(Box<FunctionCall>),
+	BinaryExpr(BinaryExpr),
+	FunctionCall(FunctionCall),
 }
 
-pub enum ArithmeticOperator {
+impl Expr {
+	pub fn gen_expression(&self) -> String {
+		match self {
+			Self::ScalarValue(x) => x.gen_expression(),
+			Self::Variable(x) => x.gen_expression(),
+			Self::BinaryExpr(x) => x.gen_expression(),
+			Self::FunctionCall(x) => x.gen_expression(),
+		}
+	}
+
+	pub fn gen_code_unit(&self) -> String {
+		let mut s = self.gen_expression();
+		s.push_str(";\n");
+		s
+	}
+}
+
+pub enum BinaryOperator {
 	Add,
 	Sub,
-}
-
-pub struct Arithmetic {
-	left: Expr,
-	right: Expr,
-	op: ArithmeticOperator,
-}
-
-pub struct Comparison {
-	left: Expr,
-	right: Expr,
-	op: ComparisonOperator,
-}
-
-pub enum ComparisonOperator {
 	Eq,
-	NotEq,
+	Neq,
+}
+
+impl BinaryOperator {
+	fn gen_symbol(&self) -> String {
+		match self {
+			Self::Add => "+".into(),
+			Self::Sub => "-".into(),
+			Self::Eq => "==".into(),
+			Self::Neq => "!=".into(),
+		}
+	}
+}
+
+pub struct BinaryExpr {
+	left: VariableRef,
+	right: VariableRef,
+	op: BinaryOperator,
+}
+
+impl BinaryExpr {
+	pub fn gen_expression(&self) -> String {
+		let mut s = String::new();
+		format!("{} {} {}",
+			   self.left.gen_expression(),
+			   self.op.gen_symbol(),
+			   self.right.gen_expression())
+	}
 }
 
 pub struct FunctionCall {
-	func: Function,
-	args: Vec<Expr>,
+	func: FunctionRef,
+	args: Vec<VariableRef>,
+}
+
+impl FunctionCall {
+	pub fn gen_expression(&self) -> String {
+		self.func.gen_call(&self.args)
+	}
+}
+
+pub struct FunctionDefinition {
+	func: FunctionRef,
+}
+
+impl FunctionDefinition {
+	pub fn new(
+		name: &str,
+		decl: FunctionDeclaration,
+		def: CodeBlock,
+	) -> Self {
+		let func = Function::from_parts(name, Some(decl), Some(def)).into();
+		Self { func }
+	}
+
+	pub fn get_function_ref(&self) -> FunctionRef {
+		self.func.clone()
+	}
+
+	pub fn gen_code_unit(&self) -> String {
+		self.func.gen_definition().unwrap()
+	}
 }
 
 pub enum CodeUnit {
-	TypeDefinition(TypeRef),
-	VariableDefinition(VariableRef),
+	TypeDefinition(TypeDefinition),
+	VariableDefinition(VariableDefinition),
+	FunctionDefinition(FunctionDefinition),
 	Assignment(Assignment),
 	Expr(Expr),
 	If(IfBlock),
 }
 
+impl CodeUnit {
+	pub fn gen_code_unit(&self) -> String {
+		match self {
+			Self::TypeDefinition(x) => x.gen_code_unit(),
+			Self::VariableDefinition(x) => x.gen_code_unit(),
+			Self::FunctionDefinition(x) => x.gen_code_unit(),
+			Self::Assignment(x) => x.gen_code_unit(),
+			Self::Expr(x) => x.gen_code_unit(),
+			Self::If(x) => x.gen_code_unit(),
+		}
+	}
+}
+
+pub struct TypeDefinition {
+	typ: TypeRef
+}
+
+impl TypeDefinition {
+	fn gen_code_unit(&self) -> String {
+		let mut s = self.typ.gen_definition();
+		s.push_str(";\n");
+		s
+	}
+}
+
+pub struct VariableDefinition {
+	var: VariableRef
+}
+
+impl VariableDefinition {
+	fn gen_code_unit(&self) -> String {
+		let mut s = self.var.gen_definition();
+		s.push_str(";\n");
+		s
+	}
+}
+
 pub struct IfBlock {
-	expr: Expr,
+	expr: VariableRef,
 	block: CodeBlock,
 }
 
+impl IfBlock {
+	pub fn from_parts(expr: VariableRef, block: CodeBlock) -> Self {
+		Self { expr, block }
+	}
+
+	pub fn gen_code_unit(&self) -> String {
+		format!(
+			"{}\n{}",
+			self.expr.gen_expression(),
+			self.block.gen_code_block()
+		)
+	}
+}
+
 pub struct CodeBlock {
-	lines: Vec<CodeUnit>,
+	units: Vec<CodeUnit>,
+}
+
+impl CodeBlock {
+	pub fn new() -> Self {
+		CodeBlock { units: Vec::new() }
+	}
+
+	pub fn push(&mut self, unit: CodeUnit) {
+		self.units.push(unit);
+	}
+
+	pub fn gen_code_block(&self) -> String {
+		let mut s: String = "{\n".into();
+		for unit in &self.units {
+			s.push('\t');
+			s.push_str(&unit.gen_code_unit());
+		}
+		s.push_str("}\n");
+		s
+	}
 }
 
 struct FunctionDeclaration {
@@ -168,6 +312,29 @@ impl Function {
 		Self { name: name.into(), declaration, definition }
 	}
 
+	pub fn gen_declaration(&self) -> Option<String> {
+		let decl = self.declaration.as_ref()?;
+		let mut args = String::new();
+		for (i, arg) in decl.args.iter().enumerate() {
+			args.push_str(&arg.gen_signature());
+			args.push_str(&format!(" arg_{}", i));
+			if i < decl.args.len() {
+				args.push_str(", ");
+			}
+		}
+		Some(format!(
+			"{} {}({})",
+			decl.ret.gen_signature(),
+			&self.name,
+			args
+		))
+	}
+
+	pub fn gen_definition(&self) -> Option<String> {
+		let defn = self.definition.as_ref()?;
+		Some(format!("{} {}", self.gen_declaration()?, defn.gen_code_block()))
+	}
+
 	pub fn gen_call(&self, args: &[VariableRef]) -> String {
 		let mut s = format!("{}(", self.name);
 
@@ -183,7 +350,22 @@ impl Function {
 	}
 }
 
-pub struct Assignment {}
+pub struct Assignment {
+	variable: VariableRef,
+	expr: Expr,
+}
+
+impl Assignment {
+	pub fn new(variable: VariableRef, expr: Expr) -> Self {
+		Self { variable, expr, }
+	}
+
+	pub fn gen_code_unit(&self) -> String {
+		format!("{} = {};\n",
+				self.variable.gen_expression(),
+				self.expr.gen_expression())
+	}
+}
 
 #[derive(Clone)]
 pub struct Variable {
@@ -205,7 +387,7 @@ impl Variable {
 	}
 
 	pub fn gen_definition(&self) -> String {
-		format!("{} var_{};", self.typ.gen_signature(), self.id)
+		format!("{} var_{}", self.typ.gen_signature(), self.id)
 	}
 
 	pub fn gen_expression(&self) -> String {
@@ -236,7 +418,7 @@ impl Array {
 	}
 
 	pub fn gen_definition(&self) -> String {
-		format!("typedef {} ArrType_{}[{}];",
+		format!("typedef {} ArrType_{}[{}]",
 				self.typ.gen_signature(),
 				self.id,
 				self.sz)
@@ -273,7 +455,7 @@ impl Struct {
 			s.push_str(&format!("\t{} {};\n", name, typ.gen_signature()));
 		}
 
-		s.push_str(&format!("}} struct_{};\n", self.id));
+		s.push_str(&format!("}} struct_{}\n", self.id));
 		s
 	}
 
