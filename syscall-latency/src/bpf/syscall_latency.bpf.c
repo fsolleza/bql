@@ -36,11 +36,13 @@ struct syscall_event_buffer {
 };
 
 // PERF_EVENT_ARRAY to communicate with userspace
-struct {
+typedef struct pb {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
 	__uint(key_size, sizeof(int));
 	__uint(value_size, sizeof(int));
-} perf_buffer SEC(".maps");
+} pb;
+
+pb perf_buffer SEC(".maps");
 
 //struct {
 //	__uint(type, BPF_MAP_TYPE_HASH);
@@ -123,8 +125,12 @@ struct {
 //}
 
 SEC("tp/raw_syscalls/sys_enter")
-int handle_sys_enter(struct sys_enter_ctx *ctx) {
-    struct task_struct* task = (struct task_struct*)bpf_get_current_task();
+int handle_sys_enter(struct sys_enter_ctx *ctx);
+
+int handle_sys_enter(struct sys_enter_ctx *ctx)
+{
+    struct task_struct* task;
+	task = bpf_get_current_task();
     uint32_t pid = 0;
     uint32_t tid = 0;
     bpf_probe_read(&pid, sizeof(pid), &task->tgid);
