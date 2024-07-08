@@ -1,5 +1,11 @@
 use rand::prelude::*;
-use std::sync::Arc;
+use std::sync::{
+	Arc,
+	atomic::{AtomicU64, Ordering::SeqCst},
+};
+
+static VARID: AtomicU64 = AtomicU64::new(0);
+static TYPEID: AtomicU64 = AtomicU64::new(0);
 
 /*
  * TODO:
@@ -44,6 +50,7 @@ pub enum Type {
 	Uint64T,
 	Int32T,
 	Int64T,
+	SizeT,
 	Struct(Struct),
 	Array(Array),
 	Pointer(Pointer),
@@ -64,6 +71,7 @@ impl Type {
 			Self::Uint64T => "uint64_t".into(),
 			Self::Int32T => "int32_t".into(),
 			Self::Int64T => "int64_t".into(),
+			Self::SizeT => "size_t".into(),
 			Self::Char => "char".into(),
 			Self::Void => "void".into(),
 			Self::Struct(s) => s.gen_signature(),
@@ -84,6 +92,7 @@ impl Type {
 			Self::Uint64T => "uint64_t".into(),
 			Self::Int32T => "int32_t".into(),
 			Self::Int64T => "int64_t".into(),
+			Self::SizeT => "size_t".into(),
 			Self::Void => "void".into(),
 			Self::Struct(s) => s.gen_definition(),
 			Self::Array(a) => a.gen_definition(),
@@ -142,6 +151,7 @@ pub enum Expr {
 	ScalarValue(ScalarValue),
 	Variable(VariableRef),
 	VariableMember(VariableMember),
+	Reference(Reference),
 	BinaryExpr(BinaryExpr),
 	FunctionCall(FunctionCall),
 }
@@ -151,9 +161,10 @@ impl Expr {
 		match self {
 			Self::ScalarValue(x) => x.gen_expression(),
 			Self::Variable(x) => x.gen_expression(),
+			Self::VariableMember(x) => x.gen_expression(),
+			Self::Reference(x) => x.gen_expression(),
 			Self::BinaryExpr(x) => x.gen_expression(),
 			Self::FunctionCall(x) => x.gen_expression(),
-			Self::VariableMember(x) => x.gen_expression(),
 		}
 	}
 
@@ -176,6 +187,18 @@ impl Into<Expr> for VariableRef {
 	}
 }
 
+impl Into<Expr> for VariableMember {
+	fn into(self) -> Expr {
+		Expr::VariableMember(self)
+	}
+}
+
+impl Into<Expr> for Reference {
+	fn into(self) -> Expr {
+		Expr::Reference(self)
+	}
+}
+
 impl Into<Expr> for BinaryExpr {
 	fn into(self) -> Expr {
 		Expr::BinaryExpr(self)
@@ -188,12 +211,19 @@ impl Into<Expr> for FunctionCall {
 	}
 }
 
-impl Into<Expr> for VariableMember {
-	fn into(self) -> Expr {
-		Expr::VariableMember(self)
-	}
+pub struct Reference {
+	expr: Box<Expr>,
 }
 
+impl Reference {
+	pub fn new(expr: Box<Expr>) -> Self {
+		Reference { expr }
+	}
+
+	pub fn gen_expression(&self) -> String {
+		format!("&({})", self.expr.gen_expression())
+	}
+}
 
 pub struct VariableMember {
 	variable: VariableRef,
@@ -471,25 +501,25 @@ impl ScopeBlock {
 
 struct FunctionDeclaration {
 	ret: TypeRef,
-	args: Vec<TypeRef>,
-	vars: Vec<VariableRef>,
+	arg_types: Vec<TypeRef>,
+	arg_vars: Vec<VariableRef>,
 }
 
 impl FunctionDeclaration {
 	pub fn new(return_type: TypeRef, argument_types: Vec<TypeRef>) -> Self {
-		let vars: Vec<VariableRef> = argument_types.iter().cloned().map(|x| {
+		let arg_vars: Vec<VariableRef> = argument_types.iter().cloned().map(|x| {
 			Variable::new(x, None).into()
 		}).collect();
 
 		Self {
 			ret: return_type,
-			args: argument_types,
-			vars,
+			arg_types: argument_types,
+			arg_vars,
 		}
 	}
 
-	pub fn get_arg_var(&self, idx: usize) -> Option<VariableRef> {
-		Some(self.vars.get(idx)?.clone())
+	pub fn get_arg(&self, idx: usize) -> Option<VariableRef> {
+		Some(self.arg_vars.get(idx)?.clone())
 	}
 }
 
@@ -523,17 +553,17 @@ impl Function {
 		Self::from_optional_parts(name, Some(decl), Some(def))
 	}
 
-	pub fn get_arg_var(&self, idx: usize) -> Option<VariableRef> {
-		self.declaration.as_ref()?.get_arg_var(idx)
+	pub fn get_arg(&self, idx: usize) -> Option<VariableRef> {
+		self.declaration.as_ref()?.get_arg(idx)
 	}
 
 	pub fn gen_declaration(&self) -> Option<String> {
 		let decl = self.declaration.as_ref()?;
 		let mut args = String::new();
-		for (i, arg) in decl.args.iter().enumerate() {
-			args.push_str(&arg.gen_signature());
-			args.push_str(&format!(" arg_{}", i));
-			if i < decl.args.len() - 1 {
+		for (i, arg) in decl.arg_vars.iter().enumerate() {
+			args.push_str(&arg.gen_definition());
+			//args.push_str(&format!(" arg_{}", i));
+			if i < decl.arg_vars.len() - 1 {
 				args.push_str(", ");
 			}
 		}
@@ -599,17 +629,18 @@ impl Into<String> for Qualifier {
 
 #[derive(Clone)]
 pub struct Variable {
-	typ: TypeRef,
+	pub typ: TypeRef,
+	pub qualifiers: Option<Vec<Qualifier>>,
 	id: u64,
-	qualifiers: Option<Vec<Qualifier>>,
 }
 
 // Variables can be used or referenced or assigned to multiple times
 type VariableRef = Arc<Variable>;
 
 impl Variable {
+
 	pub fn new(typ: TypeRef, qualifiers: Option<&[Qualifier]>) -> Self {
-		let id = thread_rng().gen();
+		let id = VARID.fetch_add(1, SeqCst);
 		Self::new_with_id(typ, qualifiers, id)
 	}
 
@@ -669,7 +700,7 @@ pub struct Array {
 
 impl Array {
 	pub fn new(typ: TypeRef, sz: usize) -> Self {
-		let id = thread_rng().gen();
+		let id = TYPEID.fetch_add(1, SeqCst);
 		Self::new_with_id(typ, sz, id)
 	}
 
@@ -698,7 +729,7 @@ pub struct Struct {
 impl Struct {
 
 	pub fn new(fields: &[(String, TypeRef)]) -> Self {
-		Self::new_with_id(fields, thread_rng().gen())
+		Self::new_with_id(fields, TYPEID.fetch_add(1, SeqCst))
 	}
 
 	pub fn new_with_id(fields: &[(String, TypeRef)], id: u64) -> Self {
@@ -782,7 +813,7 @@ impl PerCpuArray {
 		value: TypeRef,
 		max_entries: u64,
 	) -> Self {
-		Self::new_with_id(key, value, max_entries, thread_rng().gen())
+		Self::new_with_id(key, value, max_entries, TYPEID.fetch_add(1, SeqCst))
 	}
 
 	pub fn gen_signature(&self) -> String {
@@ -825,7 +856,7 @@ impl PerfEventArray {
 		key_size: ScalarValue,
 		value_size: ScalarValue,
 	) -> Self {
-		Self::new_with_id(key_size, value_size, thread_rng().gen())
+		Self::new_with_id(key_size, value_size, TYPEID.fetch_add(1, SeqCst))
 	}
 
 
@@ -868,10 +899,11 @@ impl BpfProgram {
 		format!("SEC(\"{}\")\n{}", self.hook, self.func.gen_definition().unwrap())
 	}
 
-	pub fn get_arg_var(&self, idx: usize) -> VariableRef {
-		self.func.get_arg_var(idx).unwrap()
+	pub fn get_arg(&self, idx: usize) -> VariableRef {
+		self.func.get_arg(idx).unwrap()
 	}
 }
+
 
 #[cfg(test)]
 mod test {
@@ -984,20 +1016,14 @@ mod test {
 		code_block.push(Include::Library("bpf/bpf_helpers.h".into()).into());
 
 		let qualifiers = &[Qualifier::Const, Qualifier::Volatile];
-		let var0 = Variable::new_with_id(
-			Type::Uint32T.into(),
-			Some(qualifiers),
-			0
-		).into_ref();
+		let var0 =
+			Variable::new( Type::Uint32T.into(), Some(qualifiers)).into_ref();
 		let var0_def: VariableDefinition = (&var0).into();
 		code_block.push(var0_def.into());
 
-		let qualifiers = &[Qualifier::Const, Qualifier::Volatile];
-		let var1 = Variable::new_with_id(
-			Type::Uint32T.into(),
-			Some(qualifiers),
-			1
-		).into_ref();
+		let q = &[Qualifier::Const, Qualifier::Volatile];
+		let var1 =
+			Variable::new( Type::Uint32T.into(), Some(q)).into_ref();
 		let var1_def: VariableDefinition = (&var1).into();
 		code_block.push(var1_def.into());
 
@@ -1013,20 +1039,19 @@ mod test {
 		 * Array 0: Arguments in the BPF function call
 		 */
 		let array0: TypeRef =
-			Type::Array(Array::new_with_id(Type::Uint32T.into(), 6, 0)).into();
+			Type::Array(Array::new(Type::Uint32T.into(), 6)).into();
 		let array0_def: TypeDefinition = (&array0).into();
 		code_block.push(array0_def.into());
 
 		/*
 		 * Struct 0: BPF ctx
 		 */
-		let sys_enter_ctx: TypeRef = Type::Struct(Struct::new_with_id(
-			&[
+		let sys_enter_ctx: TypeRef = Type::Struct(Struct::new(
+				&[
 				("pad".into(), Type::Uint64T.into()),
 				("syscall_number".into(), Type::Int64T.into()),
 				("args".into(), array0.clone()),
-			],
-			0
+				],
 		)).into();
 		let struct_def: TypeDefinition = (&sys_enter_ctx).into();
 		code_block.push(struct_def.into());
@@ -1034,15 +1059,14 @@ mod test {
 		/*
 		 * Struct 1: Syscall Event
 		 */
-		let struct1: TypeRef = Type::Struct(Struct::new_with_id(
-			&[
+		let struct1: TypeRef = Type::Struct(Struct::new(
+				&[
 				("pid".into(), Type::Uint32T.into()),
 				("tid".into(), Type::Uint32T.into()),
 				("syscall_number".into(), Type::Uint64T.into()),
 				("start_time".into(), Type::Uint64T.into()),
 				("duration".into(), Type::Uint64T.into()),
-			],
-			1
+				],
 		)).into();
 		let struct_def: TypeDefinition = (&struct1).into();
 		code_block.push(struct_def.into());
@@ -1051,20 +1075,19 @@ mod test {
 		 * Array 1: Array used in the event buffer (struct 2)
 		 */
 		let array1: TypeRef =
-			Type::Array(Array::new_with_id(struct1.clone(), 256, 2)).into();
+			Type::Array(Array::new(struct1.clone(), 256)).into();
 		let array1_def: TypeDefinition = (&array1).into();
 		code_block.push(array1_def.into());
 
 		/*
 		 * Struct 2: A buffer of such syscall events
 		 */
-		let struct2: TypeRef = Type::Struct(Struct::new_with_id(
-			&[
+		let struct2: TypeRef = Type::Struct(Struct::new(
+				&[
 				("length".into(), Type::Uint32T.into()),
 				("buffer".into(), array1.clone()),
-			],
-			2
-		)).into();
+				],
+				)).into();
 		let struct_def: TypeDefinition = (&struct2).into();
 		code_block.push(struct_def.into());
 
@@ -1072,19 +1095,18 @@ mod test {
 		 * Map 0: Define the type that the perf buf would take
 		 */
 		let map0: TypeRef = Type::BpfMap(BpfMap::PerfEventArray(
-			PerfEventArray::new_with_id(
-				ScalarValue::Const("sizeof(int)".into()),
-				ScalarValue::Const("sizeof(int)".into()),
-				0
-			)
-		)).into();
+				PerfEventArray::new(
+					ScalarValue::Const("sizeof(int)".into()),
+					ScalarValue::Const("sizeof(int)".into()),
+					)
+				)).into();
 		let map_def: TypeDefinition = (&map0).into();
 		code_block.push(map_def.into());
 
 		/*
 		 * perf_buf: Define the actual perf buffer
 		 */
-		let perf_buf: VariableRef = Variable::new_with_id(map0.clone(), None, 0).into();
+		let perf_buf: VariableRef = Variable::new(map0.clone(), None).into();
 		let perf_buf_def: VariableDefinition = (&perf_buf).into();
 		code_block.push(perf_buf_def.into());
 
@@ -1094,8 +1116,8 @@ mod test {
 		let key: TypeRef = Type::__U32.into();
 		let value = struct2.clone();
 		let buffer_map_t: TypeRef = Type::BpfMap(BpfMap::PerCpuArray(
-			PerCpuArray::new_with_id(key,value, 1, 0)
-		)).into();
+				PerCpuArray::new(key,value, 1)
+				)).into();
 		let buffer_map_def: TypeDefinition = (&buffer_map_t).into();
 		code_block.push(buffer_map_def.into());
 
@@ -1103,19 +1125,33 @@ mod test {
 		 * Define an instance of the buffer map
 		 */
 		let buffer_map: VariableRef =
-			Variable::new_with_id(buffer_map_t.clone(), None, 1).into();
+			Variable::new(buffer_map_t.clone(), None).into();
 		let buffer_map_def: VariableDefinition = (&buffer_map).into();
 		code_block.push(buffer_map_def.into());
+
+		/*
+		 * Define a few functions we will use
+		 */
+		let sizeof: FunctionRef = Function::with_name("sizeof").into();
+
+		let bpf_probe_read: FunctionRef =
+			Function::with_name("bpf_probe_read").into();
+
+		let bpf_ktime_get_ns: FunctionRef =
+			Function::with_name("bpf_ktime_get_ns").into();
 
 		/*
 		 * Define the BPF program
 		 */
 
 		let ret: TypeRef = Type::Int.into();
-		let args: Vec<TypeRef> = vec![sys_enter_ctx.clone()];
+		let args: Vec<TypeRef> = vec![Type::Pointer(Pointer::new(sys_enter_ctx.clone())).into()];
 		let bpf_declaration = FunctionDeclaration::new(ret, args);
 		let mut bpf_scope_block = ScopeBlock::new();
 
+		/*
+		 * Get task struct into a variable
+		 */
 		let task_struct_t: TypeRef =
 			Type::Other("struct task_struct".into()).into();
 
@@ -1137,7 +1173,9 @@ mod test {
 			VariableAssignment::new(task.clone(), bpf_get_current_task_call);
 		bpf_scope_block.push(task_assign.into());
 
-
+		/*
+		 * Initialize a variable to hold the pid
+		 */
 		let pid: VariableRef = Variable::new(Type::Uint32T.into(), None).into();
 		let pid_definition: VariableDefinition = (&pid).into();
 		let pid_assignment: VariableAssignment = 
@@ -1145,6 +1183,83 @@ mod test {
 		bpf_scope_block.push(pid_definition.into());
 		bpf_scope_block.push(pid_assignment.into());
 
+		/*
+		 * And then assign this field to another variable that will be passed to
+		 * the bpf_probe_read function
+		 */
+		let pid_ref: Expr =
+			Reference::new(Box::new(pid.clone().into())).into();
+
+		let pid_ref_var_t: TypeRef =
+			Type::Pointer(Pointer::new(pid.typ.clone())).into();
+
+		let pid_ref_var: VariableRef =
+			Variable::new(pid_ref_var_t, None).into();
+
+		let pid_ref_var_def: VariableDefinition = (&pid_ref_var).into();
+		bpf_scope_block.push(pid_ref_var_def.into());
+
+		let pid_ref_var_assign: VariableAssignment =
+			VariableAssignment::new(pid_ref_var.clone(), pid_ref);
+		bpf_scope_block.push(pid_ref_var_assign.into());
+
+		/*
+		 * And extract the size of this thing
+		 */
+		let sizeof_pid: VariableRef =
+			Variable::new(Type::SizeT.into(), None).into();
+
+		let sizeof_pid_def: VariableDefinition = (&sizeof_pid).into();
+		bpf_scope_block.push(sizeof_pid_def.into());
+
+		let sizeof_pid_assign = VariableAssignment::new(
+			sizeof_pid.clone(),
+			FunctionCall::new(sizeof.clone(), vec![pid_ref_var.clone()]).into()
+		);
+		bpf_scope_block.push(sizeof_pid_assign.into());
+
+		/*
+		 * Pointers to members of task struct
+		 */
+
+		let task_pid_ptr: VariableRef =
+			Variable::new(
+				Type::Pointer(
+					Pointer::new(Type::Uint32T.into()).into()
+				).into(),
+				None
+			).into();
+		let task_pid_ptr_def: VariableDefinition = (&task_pid_ptr).into();
+		bpf_scope_block.push(task_pid_ptr_def.into());
+
+		let task_pid_ptr_val: Expr = Expr::Reference(
+			Reference::new(
+				Expr::VariableMember(VariableMember::new(task.clone(), "tgid")).into()
+			)
+		);
+
+		let task_pid_ptr_assign: VariableAssignment =
+			VariableAssignment::new(task_pid_ptr.clone(), task_pid_ptr_val);
+
+		bpf_scope_block.push(task_pid_ptr_assign.into());
+
+		/*
+		 * Function call to get the pid
+		 */
+
+		let args = vec![
+			pid_ref_var.clone(),
+			sizeof_pid.clone(),
+			task_pid_ptr.clone()
+		];
+		let bpf_probe_read_call: Expr =
+			FunctionCall::new(bpf_probe_read.clone(), args).into();
+		bpf_scope_block.push(bpf_probe_read_call.into());
+
+
+		/*
+		 * Initialize a variable to hold the tid
+		 */
 		let tid: VariableRef = Variable::new(Type::Uint32T.into(), None).into();
 		let tid_definition: VariableDefinition = (&tid).into();
 		let tid_assignment: VariableAssignment = 
@@ -1152,14 +1267,132 @@ mod test {
 		bpf_scope_block.push(tid_definition.into());
 		bpf_scope_block.push(tid_assignment.into());
 
+		/*
+		 * And then assign a reference to this variable to another variable that
+		 * will be passed to the bpf_probe_read function
+		 */
+		let tid_ref: Expr =
+			Reference::new(Box::new(tid.clone().into())).into();
+
+		let tid_ref_var_t: TypeRef =
+			Type::Pointer(Pointer::new(tid.typ.clone())).into();
+
+		let tid_ref_var: VariableRef =
+			Variable::new(tid_ref_var_t, None).into();
+
+		let tid_ref_var_def: VariableDefinition = (&tid_ref_var).into();
+		bpf_scope_block.push(tid_ref_var_def.into());
+
+		let tid_ref_var_assign: VariableAssignment =
+			VariableAssignment::new(tid_ref_var.clone(), tid_ref);
+		bpf_scope_block.push(tid_ref_var_assign.into());
+
+		/*
+		 * Extract the size of this thing
+		 */
+		let sizeof_tid: VariableRef =
+			Variable::new(Type::SizeT.into(), None).into();
+
+		let sizeof_tid_def: VariableDefinition = (&sizeof_tid).into();
+		bpf_scope_block.push(sizeof_tid_def.into());
+
+		let sizeof_tid_assign = VariableAssignment::new(
+			sizeof_tid.clone(),
+			FunctionCall::new(sizeof.clone(), vec![tid_ref_var.clone()]).into()
+		);
+		bpf_scope_block.push(sizeof_tid_assign.into());
+
+		/*
+		 * Pointer into tid in task struct
+		 */
+		let task_tid_ptr: VariableRef =
+			Variable::new(
+				Type::Pointer(
+					Pointer::new(Type::Uint32T.into()).into()
+				).into(),
+				None
+			).into();
+		let task_tid_ptr_def: VariableDefinition = (&task_tid_ptr).into();
+		bpf_scope_block.push(task_tid_ptr_def.into());
+
+		let task_tid_ptr_val: Expr = Expr::Reference(
+			Reference::new(
+				Expr::VariableMember(VariableMember::new(task.clone(), "tid")).into()
+			)
+		);
+
+		let task_tid_ptr_assign: VariableAssignment =
+			VariableAssignment::new(task_tid_ptr.clone(), task_tid_ptr_val);
+
+		bpf_scope_block.push(task_tid_ptr_assign.into());
+
+		/*
+		 * Function call to get the tid
+		 */
+
+		let args = vec![
+			tid_ref_var.clone(),
+			sizeof_tid.clone(),
+			task_tid_ptr.clone()
+		];
+		let bpf_probe_read_call: Expr =
+			FunctionCall::new(bpf_probe_read.clone(), args).into();
+		bpf_scope_block.push(bpf_probe_read_call.into());
+
+		/*
+		 * Get nanosecond time
+		 */
+
+		let time: VariableRef = Variable::new(Type::Uint64T.into(), None).into();
+		let time_def: VariableDefinition = (&time).into();
+		let get_time_call: Expr =
+			FunctionCall::new(bpf_ktime_get_ns.clone(), vec![]).into();
+		let time_assignment = VariableAssignment::new(time.clone(), get_time_call);
+		bpf_scope_block.push(time_def.into());
+		bpf_scope_block.push(time_assignment.into());
+
+		/*
+		 * Get syscall number
+		 */
+		let syscall_number: VariableRef =
+			Variable::new(Type::Uint64T.into(), None).into();
+		let syscall_number_def: VariableDefinition = (&syscall_number).into();
+		let ctx_num: Expr = VariableMember::new(
+			bpf_declaration.get_arg(0).unwrap().clone(),
+			"syscall_number"
+		).into();
+		let syscall_number_assign =
+			VariableAssignment::new(syscall_number.clone(), ctx_num);
+		bpf_scope_block.push(syscall_number_def.into());
+		bpf_scope_block.push(syscall_number_assign.into());
+
+		//uint64_t time = bpf_ktime_get_ns();
+		//int syscall_number = ctx->syscall_number;
+
+		/*
+		 * A zero value for lookups
+		 */
+		let zero: VariableRef =
+			Variable::new(Type::Int.into(), None).into();
+		let zero_def: VariableDefinition = (&zero).into();
+		let zero_expr: Expr = ScalarValue::Int(0).into();
+		let zero_assign = VariableAssignment::new(zero.clone(), zero_expr);
+		bpf_scope_block.push(zero_def.into());
+		bpf_scope_block.push(zero_assign.into());
+
+
+		/*
+		 * Finally make the handl_sys_enter function
+		 */
 		let handle_sys_enter: BpfProgramRef = BpfProgram::new(
 			"handle_sys_enter",
 			bpf_declaration,
 			bpf_scope_block,
 			"tp/raw_syscalls/sys_enter"
-		).into();
+			).into();
 		let handle_sys_enter_def: BpfProgramDefinition = (&handle_sys_enter).into();
 		code_block.push(handle_sys_enter_def.into());
+
 
 		println!("{}", clang_format(&code_block.gen_code_block()).unwrap());
 		assert_code_eq(exp, &code_block.gen_code_block());
