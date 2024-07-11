@@ -15,17 +15,17 @@ static TYPEID: AtomicU64 = AtomicU64::new(0);
  */
 
 #[derive(Clone)]
-pub enum ScalarValue {
+pub enum Scalar {
 	Null,
 	Float(f64),
 	Uint(u64),
 	Bool(bool),
 	Int(i64),
 	Cstring(String),
-	Const(String), // catchall for typeof, sizeof
+	Cconst(String), // catchall for typeof, sizeof, 0 initilize
 }
 
-impl ScalarValue {
+impl Scalar {
 	fn gen_expression(&self) -> String {
 		match self {
 			Self::Null => "null".into(),
@@ -34,12 +34,20 @@ impl ScalarValue {
 			Self::Bool(x) => format!("{}", x),
 			Self::Int(x) => format!("{}", x),
 			Self::Cstring(x) => format!("\"{}\"", x),
-			Self::Const(x) => format!("{}", x),
+			Self::Cconst(x) => format!("{}", x),
 		}
 	}
 
 	fn into_expr(self) -> Expr {
-		Expr::ScalarValue(self)
+		Expr::Scalar(self)
+	}
+
+	fn cstring(x: &str) -> Self {
+		Self::Cstring(x.into())
+	}
+
+	fn cconst(x: &str) -> Self {
+		Self::Cconst(x.into())
 	}
 }
 
@@ -176,24 +184,48 @@ impl Pointer {
 /// For now, we do not allow nested exprs to simplify things. Assign an expr to
 /// a variable then send the variable into the expr.
 pub enum Expr {
-	ScalarValue(ScalarValue),
+	Scalar(Scalar),
 	Variable(Variable),
 	Member(Member),
 	Reference(Reference),
 	BinaryExpr(BinaryExpr),
+	UnaryExpr(UnaryExpr),
 	FunctionCall(FunctionCall),
+	Cast(Cast),
+	Deref(Deref),
 }
 
 impl Expr {
 	pub fn gen_expression(&self) -> String {
 		match self {
-			Self::ScalarValue(x) => x.gen_expression(),
+			Self::Scalar(x) => x.gen_expression(),
 			Self::Variable(x) => x.gen_expression(),
 			Self::Member(x) => x.gen_expression(),
 			Self::Reference(x) => x.gen_expression(),
 			Self::BinaryExpr(x) => x.gen_expression(),
 			Self::FunctionCall(x) => x.gen_expression(),
+			Self::UnaryExpr(x) => x.gen_expression(),
+			Self::Cast(x) => x.gen_expression(),
+			Self::Deref(x) => x.gen_expression(),
 		}
+	}
+
+	pub fn null() -> Self { Self::Scalar(Scalar::Null) }
+	pub fn float(x: f64) -> Self { Self::Scalar(Scalar::Float(x)) }
+	pub fn uint(x: u64) -> Self { Self::Scalar(Scalar::Uint(x)) }
+	pub fn int(x: i64) -> Self { Self::Scalar(Scalar::Int(x)) }
+	pub fn bool(x: bool) -> Self { Self::Scalar(Scalar::Bool(x)) }
+	pub fn cstring(x: &str) -> Self { Self::Scalar(Scalar::Cstring(x.into())) }
+	pub fn cconst(x: &str) -> Self { Self::Scalar(Scalar::Cconst(x.into())) }
+
+	pub fn deref(self) -> Self {
+		Self::Deref( Deref {
+			expr: Box::new(self),
+		})
+	}
+
+	pub fn cast(self, typ: Type) -> Self {
+		Self::Cast(Cast { expr: Box::new(self), typ })
 	}
 
 	pub fn reference(self) -> Self {
@@ -208,6 +240,20 @@ impl Expr {
 		Self::Member(Member::new(self, member, true))
 	}
 
+	pub fn binary(l: Expr, op: BinaryOperator, r: Expr) -> Self {
+		Self::BinaryExpr(BinaryExpr {
+			lr: Box::new((l, r)),
+			op,
+		})
+	}
+
+	pub fn unary(expr: Expr, op: UnaryOperator) -> Self {
+		Self::UnaryExpr(UnaryExpr {
+			expr: Box::new(expr),
+			op,
+		})
+	}
+
 	pub fn gen_code_unit(&self) -> String {
 		let mut s = self.gen_expression();
 		s.push_str(";\n");
@@ -215,39 +261,17 @@ impl Expr {
 	}
 }
 
-impl Into<Expr> for ScalarValue {
-	fn into(self) -> Expr {
-		Expr::ScalarValue(self)
-	}
+pub struct Deref {
+	expr: Box<Expr>,
 }
 
-impl Into<Expr> for Variable {
-	fn into(self) -> Expr {
-		Expr::Variable(self)
+impl Deref {
+	pub fn new(expr: Box<Expr>) -> Self {
+		Deref { expr }
 	}
-}
 
-//impl Into<Expr> for VariableMember {
-//	fn into(self) -> Expr {
-//		Expr::VariableMember(self)
-//	}
-//}
-
-impl Into<Expr> for Reference {
-	fn into(self) -> Expr {
-		Expr::Reference(self)
-	}
-}
-
-impl Into<Expr> for BinaryExpr {
-	fn into(self) -> Expr {
-		Expr::BinaryExpr(self)
-	}
-}
-
-impl Into<Expr> for FunctionCall {
-	fn into(self) -> Expr {
-		Expr::FunctionCall(self)
+	pub fn gen_expression(&self) -> String {
+		format!("*{}", self.expr.gen_expression())
 	}
 }
 
@@ -262,6 +286,17 @@ impl Reference {
 
 	pub fn gen_expression(&self) -> String {
 		format!("&({})", self.expr.gen_expression())
+	}
+}
+
+pub struct Cast {
+	expr: Box<Expr>,
+	typ: Type,
+}
+
+impl Cast {
+	pub fn gen_expression(&self) -> String {
+		format!("({}){}", self.typ.gen_signature(), self.expr.gen_expression())
 	}
 }
 
@@ -290,6 +325,9 @@ pub enum BinaryOperator {
 	Sub,
 	Eq,
 	Neq,
+	Lt,
+	And,
+	Or,
 }
 
 impl BinaryOperator {
@@ -298,7 +336,10 @@ impl BinaryOperator {
 			Self::Add => "+".into(),
 			Self::Sub => "-".into(),
 			Self::Eq => "==".into(),
+			Self::Lt => "<".into(),
 			Self::Neq => "!=".into(),
+			Self::And => "&&".into(),
+			Self::Or => "||".into(),
 		}
 	}
 }
@@ -311,10 +352,36 @@ pub struct BinaryExpr {
 impl BinaryExpr {
 	pub fn gen_expression(&self) -> String {
 		let mut s = String::new();
-		format!("{} {} {}",
+		format!("({}) {} ({})",
 			   self.lr.0.gen_expression(),
 			   self.op.gen_symbol(),
 			   self.lr.1.gen_expression())
+	}
+}
+
+pub enum UnaryOperator {
+	Not
+}
+
+impl UnaryOperator {
+	fn gen_symbol(&self) -> String {
+		match self {
+			Self::Not => "!".into()
+		}
+	}
+}
+
+pub struct UnaryExpr {
+	expr: Box<Expr>,
+	op: UnaryOperator,
+}
+
+impl UnaryExpr {
+	pub fn gen_expression(&self) -> String {
+		let mut s = String::new();
+		format!("{}({})",
+			   self.op.gen_symbol(),
+			   self.expr.gen_expression())
 	}
 }
 
@@ -367,6 +434,7 @@ pub enum CodeUnit {
 	If(IfBlock),
 	ScopeBlock(ScopeBlock),
 	BpfProgramDefinition(BpfProgramDefinition),
+	Return(Expr),
 }
 
 impl CodeUnit {
@@ -381,6 +449,9 @@ impl CodeUnit {
 			Self::ScopeBlock(x) => x.gen_code_unit(),
 			Self::BpfProgramDefinition(x) => x.gen_code_unit(),
 			Self::LvalueAssignment(x) => x.gen_code_unit(),
+			Self::Return(x) => {
+				format!("return {};", x.gen_expression())
+			}
 		}
 	}
 }
@@ -484,7 +555,7 @@ impl IfBlock {
 
 	pub fn gen_code_unit(&self) -> String {
 		format!(
-			"{}\n{}",
+			"if ({})\n{}",
 			self.expr.gen_expression(),
 			self.block.gen_code_block()
 		)
@@ -882,23 +953,23 @@ impl PerCpuArray {
 
 #[derive(Clone)]
 pub struct PerfEventArray {
-	key_size: ScalarValue,
-	value_size: ScalarValue,
+	key_size: Scalar,
+	value_size: Scalar,
 	id: u64,
 }
 
 impl PerfEventArray {
 	pub fn new_with_id(
-		key_size: ScalarValue,
-		value_size: ScalarValue,
+		key_size: Scalar,
+		value_size: Scalar,
 		id: u64
 	) -> Self {
 		Self { key_size, value_size, id }
 	}
 
 	pub fn new(
-		key_size: ScalarValue,
-		value_size: ScalarValue,
+		key_size: Scalar,
+		value_size: Scalar,
 	) -> Self {
 		Self::new_with_id(key_size, value_size, TYPEID.fetch_add(1, SeqCst))
 	}
@@ -951,6 +1022,7 @@ impl BpfProgram {
 pub enum Lvalue {
 	Variable(Variable),
 	Member(LvalueMember),
+	Offset(LvalueOffset),
 }
 
 impl Lvalue {
@@ -958,45 +1030,115 @@ impl Lvalue {
 		Lvalue::Member(LvalueMember {
 			parent: Box::new(self),
 			member: member.into(),
+			is_ref: false,
 		})
+	}
+
+	pub fn ref_member(self, member: &str) -> Self {
+		Lvalue::Member(LvalueMember {
+			parent: Box::new(self),
+			member: member.into(),
+			is_ref: true,
+		})
+	}
+
+	pub fn offset(self, idx: Expr) -> Self {
+		Lvalue::Offset(LvalueOffset { parent: Box::new(self), idx })
 	}
 
 	pub fn gen_expression(&self) -> String {
 		match self {
 			Self::Variable(x) => x.gen_expression(),
-			Self::Member(x) => format!("*{}", x.gen_expression()),
+			Self::Member(x) => format!("{}", x.gen_expression()),
+			Self::Offset(x) => format!("{}", x.gen_expression()),
 		}
 	}
 
 	pub fn assign(self, expr: Expr) -> LvalueAssignment {
 		LvalueAssignment {
 			lvalue: self,
+			op: LvalueAssignmentOperator::Assign,
 			expr,
+			deref: false,
 		}
+	}
+
+	pub fn add_assign(self, expr: Expr) -> LvalueAssignment {
+		LvalueAssignment {
+			lvalue: self,
+			op: LvalueAssignmentOperator::AddAssign,
+			expr,
+			deref: false,
+		}
+	}
+}
+
+pub struct LvalueOffset {
+	parent: Box<Lvalue>,
+	idx: Expr,
+}
+
+impl LvalueOffset {
+	pub fn gen_expression(&self) -> String {
+		format!("{}[{}]", self.parent.gen_expression(), self.idx.gen_expression())
 	}
 }
 
 pub struct LvalueMember {
 	parent: Box<Lvalue>,
 	member: String,
+	is_ref: bool,
 }
 
 impl LvalueMember {
 	pub fn gen_expression(&self) -> String {
-		format!("{}.{}", self.parent.gen_expression(), self.member)
+		if self.is_ref {
+			format!("{}->{}", self.parent.gen_expression(), self.member)
+		} else {
+			format!("{}.{}", self.parent.gen_expression(), self.member)
+		}
+	}
+}
+
+pub enum LvalueAssignmentOperator {
+	Assign,
+	AddAssign,
+}
+
+impl LvalueAssignmentOperator {
+	pub fn gen_symbol(&self) -> String {
+		match self {
+			Self::Assign => "=".into(),
+			Self::AddAssign => "+=".into(),
+		}
 	}
 }
 
 pub struct LvalueAssignment {
 	lvalue: Lvalue,
+	op: LvalueAssignmentOperator,
 	expr: Expr,
+	deref: bool,
 }
 
 impl LvalueAssignment {
+	pub fn is_deref(mut self) -> Self {
+		self.deref = true;
+		self
+	}
+
 	pub fn gen_code_unit(&self) -> String {
-		format!("{} = {};\n",
-				self.lvalue.gen_expression(),
-				self.expr.gen_expression())
+		if self.deref {
+			format!("*{} {} {};\n",
+					self.lvalue.gen_expression(),
+					self.op.gen_symbol(),
+					self.expr.gen_expression())
+		} else {
+			format!("{} {} {};\n",
+					self.lvalue.gen_expression(),
+					self.op.gen_symbol(),
+					self.expr.gen_expression())
+		}
 	}
 }
 
@@ -1118,7 +1260,7 @@ mod test {
 			Variable::new(&Type::uint32_t(), Some(qualifiers));
 		let def = my_pid.definition();
 
-		let value = Expr::ScalarValue(ScalarValue::Uint(12345));
+		let value = Expr::uint(12345);
 		let assign = Lvalue::Variable(my_pid.clone()).assign(value);
 		code_block.push(def.into());
 		code_block.push(assign.into());
@@ -1127,11 +1269,10 @@ mod test {
 		 * Target PID variable declaration and definition
 		 */
 		let q = &[Qualifier::Const, Qualifier::Volatile];
-		let target_pid =
-			Variable::new(&Type::uint32_t(), Some(q));
+		let target_pid = Variable::new(&Type::uint32_t(), Some(q));
 		let def = target_pid.definition();
 
-		let value = Expr::ScalarValue(ScalarValue::Uint(67890));
+		let value = Expr::uint(67890);
 		let assign = Lvalue::Variable(target_pid.clone()).assign(value);
 
 		code_block.push(def.into());
@@ -1197,8 +1338,8 @@ mod test {
 		 */
 		let event_buffer_map_t = Type::bpf_map(BpfMap::PerfEventArray(
 				PerfEventArray::new(
-					ScalarValue::Const("sizeof(int)".into()),
-					ScalarValue::Const("sizeof(int)".into()),
+					Scalar::cconst("sizeof(int)"),
+					Scalar::cconst("sizeof(int)"),
 					)
 				));
 		let def = event_buffer_map_t.definition();
@@ -1212,13 +1353,29 @@ mod test {
 		code_block.push(def.into());
 
 		/*
+		 * Typedef the syscall buffer map
+		 */
+		let syscall_buffer_map_t = Type::bpf_map(BpfMap::PerCpuArray(
+			PerCpuArray::new(&Type::__u32(), &event_buffer_t, 1)
+		));
+		let def = syscall_buffer_map_t.definition();
+		code_block.push(def.into());
+
+		/*
+		 * Define the syscall buffer map object
+		 */
+		let syscall_buffer_map = Variable::new(&syscall_buffer_map_t, None);
+		let def = syscall_buffer_map.definition();
+		code_block.push(def.into());
+
+		/*
 		 * Define a few functions we will use
 		 */
 		let sizeof = Function::with_name("sizeof");
-
 		let bpf_probe_read = Function::with_name("bpf_probe_read");
-
 		let bpf_ktime_get_ns = Function::with_name("bpf_ktime_get_ns");
+		let bpf_map_lookup_elem = Function::with_name("bpf_map_lookup_elem");
+		let bpf_perf_event_output = Function::with_name("bpf_perf_event_output");
 
 		/*
 		 * Function declaration for BPF program
@@ -1257,7 +1414,7 @@ mod test {
 		let pid = Variable::new(&Type::uint32_t(), None);
 
 		let def = pid.definition();
-		let assign = pid.lvalue().assign(ScalarValue::Uint(0).into_expr());
+		let assign = pid.lvalue().assign(Expr::uint(0));
 
 		bpf_scope_block.push(def.into());
 		bpf_scope_block.push(assign.into());
@@ -1320,7 +1477,7 @@ mod test {
 		 */
 		let tid = Variable::new(&Type::uint32_t(), None);
 		let def = tid.definition();
-		let assign = tid.lvalue().assign(ScalarValue::Uint(0).into());
+		let assign = tid.lvalue().assign(Expr::uint(0));
 		bpf_scope_block.push(def.into());
 		bpf_scope_block.push(assign.into());
 
@@ -1402,12 +1559,172 @@ mod test {
 		 * A zero value for lookups
 		 */
 		let zero = Variable::new(&Type::int(), None);
-		let expr: Expr = ScalarValue::Int(0).into();
+		let expr = Expr::int(0);
 		let def = zero.definition();
 		let assign = zero.lvalue().assign(expr);
 
 		bpf_scope_block.push(def.into());
 		bpf_scope_block.push(assign.into());
+
+		/*
+		 * If statement filtering the pid and syscall number
+		 */
+
+		let syscall_filter = Expr::binary(
+			syscall_number.expr(),
+			BinaryOperator::Eq,
+			Expr::uint(0)
+		);
+		let pid_filter = Expr::binary(
+			pid.expr(),
+			BinaryOperator::Eq,
+			target_pid.expr()
+		);
+		let filt = Expr::binary(
+			syscall_filter,
+			BinaryOperator::And,
+			pid_filter,
+		);
+
+		/*
+		 * ScopeBlock for if
+		 */
+		let mut if_scope_block = ScopeBlock::new();
+
+		/*
+		 * 0-initialize the syscall_event struct
+		 */
+		let syscall_event = Variable::new(&syscall_event_t, None);
+		let def = syscall_event.definition();
+		let assign = syscall_event.lvalue().assign(Expr::cconst("{0}"));
+		if_scope_block.push(def.into());
+		if_scope_block.push(assign.into());
+
+		/*
+		 * Assign values to syscall_event struct
+		 * e.pid = pid;
+         * e.tid = tid;
+         * e.duration = 0 ;
+         * e.syscall_number = syscall_number;
+         * e.start_time = time;
+		 */
+		if_scope_block.push(
+			syscall_event.lvalue().member("pid").assign(pid.expr()).into()
+		);
+		if_scope_block.push(
+			syscall_event.lvalue().member("tid").assign(tid.expr()).into()
+		);
+		if_scope_block.push(
+			syscall_event.lvalue().member("duration").assign(Expr::uint(0)).into()
+		);
+		if_scope_block.push(
+			syscall_event.lvalue().member("syscall_number").assign(syscall_number.expr()).into()
+		);
+		if_scope_block.push(
+			syscall_event.lvalue().member("start_time").assign(syscall_number.expr()).into()
+		);
+
+		/*
+		 * struct syscall_event_buffer *buffer = bpf_map_lookup_elem(&syscall_buffers, &zero);
+		 * if (!buffer) {
+		 *   bpf_printk("ERROR GETTING BUFFER");
+		 *   return 0;
+		 * }
+		 */
+		let buffer_ptr = Variable::new(&event_buffer_t.pointer(), None);
+		let def = buffer_ptr.definition();
+		let expr = bpf_map_lookup_elem.call(
+			vec![
+				syscall_buffer_map.expr().reference(),
+				zero.expr().reference()
+			]
+		);
+		let assign = buffer_ptr.lvalue().assign(expr);
+		if_scope_block.push(def.into());
+		if_scope_block.push(assign.into());
+
+		/*
+		 * Check if the buffer is null
+		 */
+		let buffer_check = Expr::unary(buffer_ptr.expr(), UnaryOperator::Not);
+		let mut block = ScopeBlock::new();
+		block.push(CodeUnit::Return(Expr::uint(0)));
+		if_scope_block.push(IfBlock::from_parts(buffer_check, block).into());
+
+		/*
+		 * Check if the buffer length is < 256
+		 * if (buffer->length < 256) {
+         *     buffer->buffer[buffer->length] = e;
+         *     buffer->length += 1;
+         * }
+		 */
+		let buffer_len_check = Expr::binary(
+			buffer_ptr.expr().ref_member("length"),
+			BinaryOperator::Lt,
+			Expr::uint(256),
+		);
+		let mut block = ScopeBlock::new();
+		let assign = buffer_ptr
+			.lvalue()
+			.ref_member("buffer")
+			.offset(Expr::uint(1))
+			.assign(syscall_event.expr());
+		block.push(assign.into());
+		let assign = buffer_ptr
+			.lvalue()
+			.ref_member("length")
+			.add_assign(Expr::uint(1));
+		block.push(assign.into());
+
+		if_scope_block.push(IfBlock::from_parts(buffer_len_check, block).into());
+
+
+		/*
+		 * Send the buffer to userspace using the event buffer
+		 *
+		 * if (buffer->length == 256) {
+		 *   bpf_perf_event_output(
+		 *     (void *)ctx,
+		 *     &perf_buffer,
+		 *     BPF_F_CURRENT_CPU,
+		 *     buffer,
+		 *     sizeof(*buffer)
+		 *   );
+		 *   buffer->length = 0;
+		 * }
+		 *
+		 */
+		let buffer_full_check = Expr::binary(
+			buffer_ptr.expr().ref_member("length"),
+			BinaryOperator::Eq,
+			Expr::uint(256)
+		);
+		let mut block = ScopeBlock::new();
+		let expr = bpf_perf_event_output.call(
+			vec![
+					bpf_declaration
+						.get_arg(0)
+						.unwrap()
+						.expr()
+						.cast(Type::void().pointer()),
+					event_buffer_map.expr().reference(),
+					Expr::cconst("BPF_F_CURRENT_CPU"),
+					buffer_ptr.expr(),
+					sizeof.call(vec![buffer_ptr.expr().deref()]),
+			]
+		);
+		block.push(expr.into());
+
+		if_scope_block.push(IfBlock::from_parts(buffer_full_check, block).into());
+
+		/*
+		 * Finally, we push the if scope block to the bpf scope block
+		 */
+		bpf_scope_block.push(IfBlock::from_parts(filt, if_scope_block).into());
+		bpf_scope_block.push(CodeUnit::Return(Expr::uint(0).into()).into());
+
+
+		//if (syscall_number == 17 && pid == target_pid) {
 
 		/*
 		 * Finally make the handl_sys_enter function
