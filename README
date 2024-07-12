@@ -1,0 +1,92 @@
+
+							  ====================
+							  README FOR THIS REPO
+							  ====================
+
+BPF PROGRAMS
+============
+
+Project Setup
+-------------
+
+BPF programs are setup as individual Rust binaries (e.g., projects/crates) using
+libbpf. This section goes through the setup of a BPF project.
+
+	1. Setup Cargo binary as one would regularly.
+
+	2. Make the directory in the [project]/src/bpf and cd into it
+
+	3. Generate vmlinux.h:
+	   bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+
+	4. Make a file called [filename].bpf.c. Typically, this would be the project
+	   name. ** use valid rust variable characters here. For example, using "-"
+	   in the file name will cause the build to fail because libbpf-rs
+	   autmatically converts this name to a struct definitions.
+
+	   The extension is important for the build scripts later and is how libbpf
+	   understands that this is a BPF program.
+
+	5. In the file, include the following text. The license in particular is
+	   important for the linux kernel to load the file.
+
+		#include "vmlinux.h"
+		#include <bpf/bpf_core_read.h>
+		#include <bpf/bpf_helpers.h>
+		char LICENSE[] SEC("license") = "Dual BSD/GPL";
+
+	6. In the root project folder, make a build.rs file with the following. Note
+	   that [filename] should be replaced with the bpf file just created.
+
+		use libbpf_cargo::SkeletonBuilder;
+		use std::env;
+		use std::path::PathBuf;
+		
+		const SRC: &str = "src/bpf/[filename].bpf.c";
+		
+		fn main() {
+		    let mut out = PathBuf::from(
+				env::var_os("OUT_DIR")
+					.expect("OUT_DIR must be set in build script")
+			);
+		    out.push("[filename].skel.rs");
+		    SkeletonBuilder::new()
+		        .source(SRC)
+		        .build_and_generate(&out)
+		        .unwrap();
+		    println!("cargo:rerun-if-changed={SRC}");
+		}
+
+	7. Add libbpf and libc to the Cargo.toml "dependencies" table and
+	   libbpf-cargo to the "build-dependencies" table
+
+		[dependencies]
+		libbpf-rs = "0.23.3"
+		libc = "0.2"
+		
+		[build-dependencies]
+		libbpf-cargo = "0.23.3"
+
+	8. cargo build should be able to build this project.
+
+Running BPF programs
+--------------------
+
+BPF programs need to be run in sudo mode and need a bit of extra memory. In the
+main.rs file include a way to bump the memlock rlimit environment variable. Make
+sure to call this from main.
+
+	pub fn bump_memlock_rlimit() {
+		let rlimit = libc::rlimit {
+			rlim_cur: 128 << 20,
+			rlim_max: 128 << 20,
+		};
+	
+		if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlimit) } != 0 {
+			panic!("Failed to increase rlimit");
+		}
+	}
+
+
+Running cargo build (--release) puts the binary in [project]/target/debug or
+[project]/target/release. Run this binary with sudo (i.e., not using cargo run).
