@@ -452,6 +452,7 @@ dependencies = [
 name = "syscall-count"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "libbpf-cargo",
  "libbpf-rs",
  "libc",

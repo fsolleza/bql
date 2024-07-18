@@ -1,5 +1,5 @@
 [package]
-name = "syscall-count"
+name = "compile-test"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,7 +8,3 @@ edition = "2021"
 [dependencies]
 libbpf-rs = "0.23.3"
 libc = "0.2"
-clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage"] }
-
-[build-dependencies]
-libbpf-cargo = "0.23.3"
