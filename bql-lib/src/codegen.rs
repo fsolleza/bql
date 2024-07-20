@@ -148,6 +148,13 @@ impl Kind {
 		self.defined.store(true, SeqCst);
 		self.inner.gen_definition()
 	}
+
+	pub fn as_array_ref(&self) -> Option<&Array> {
+		match &*self.inner {
+			InnerKind::Array(x) => Some(&x),
+			_ => None
+		}
+	}
 }
 
 #[derive(Clone)]
@@ -1058,6 +1065,10 @@ impl Array {
 
 	pub fn alignment(&self) -> usize {
 		self.typ.alignment().unwrap()
+	}
+
+	pub fn len(&self) -> usize {
+		self.sz
 	}
 
 	pub fn size(&self) -> usize {
