@@ -15,9 +15,10 @@ use std::{
 	ops::Deref,
 	thread,
 	env::temp_dir,
-	fs::{OpenOptions, File},
+	fs::{create_dir_all, OpenOptions, File},
 	io::prelude::*,
 	path::{PathBuf, Path},
+	env,
 };
 
 pub fn bump_memlock_rlimit() {
@@ -31,27 +32,33 @@ pub fn bump_memlock_rlimit() {
 	}
 }
 
-pub struct BpfExecutor {
+fn build_path() -> PathBuf {
+	let mut a: PathBuf = "tmp-bql-lib-build".into();
+	create_dir_all(&a).unwrap();
+	a
+}
+
+pub struct BpfCode {
 	code: String,
 }
 
-impl BpfExecutor {
+impl BpfCode {
 	pub fn new(code: &str) -> Self {
 		Self {
 			code: code.into()
 		}
 	}
 
-	pub fn compile(&self) -> BpfObject {
+	pub fn compile_and_load(&self) -> BpfObject {
 
 		let source_code_path = {
-			let mut a = temp_dir();
+			let mut a = build_path();
 			a.push("bpf_source_code.bpf.c");
 			a
 		};
 
 		let object_path = {
-			let mut a = temp_dir();
+			let mut a = build_path();
 			a.push("bpf_object");
 			a
 		};
@@ -126,6 +133,7 @@ where
 	}
 	let open_obj = ObjectBuilder::default().open_file(dst_path).unwrap();
 	let obj = open_obj.load().unwrap();
+
 	obj
 }
 

@@ -19,12 +19,14 @@ use crate::codegen::{
 	Lvalue,
 	PerCpuArray,
 };
+use crate::executor::BpfCode;
+
 use std::{
 	sync::Arc,
 	collections::HashMap
 };
 
-struct KernelPlan {
+pub struct KernelPlan {
 	ctx: KernelContext,
 	plan: Vec<KernelOperator>,
 	output: PlanOutput,
@@ -32,7 +34,11 @@ struct KernelPlan {
 }
 
 impl KernelPlan {
-	fn from_parts(
+	pub fn output_variable(&self) -> Variable {
+		self.output.var.clone()
+	}
+
+	pub fn from_parts(
 		ctx: KernelContext,
 		output: &Kind,
 	) -> Self {
@@ -44,36 +50,36 @@ impl KernelPlan {
 		}
 	}
 
-	fn add_op(&mut self, op: KernelOperator) {
+	pub fn add_op(&mut self, op: KernelOperator) {
 		self.plan.push(op);
 	}
 
-	fn add_map(&mut self, map: &KernelBpfMap) {
+	pub fn add_map(&mut self, map: &KernelBpfMap) {
 		self.maps.push(map.clone());
 	}
 
-	fn add_filter_kernel_data_op(
-		&mut self,
-		kernel_data: KernelData,
-		op: BinaryOperator,
-		rhs: Expr,
-		kernel_ctx: &KernelContext,
-	) {
-		let op = FilterKernelData::new(kernel_data, op, rhs, &self.ctx).into_op();
-		self.plan.push(op);
-	}
+	//fn add_filter_kernel_data_op(
+	//	&mut self,
+	//	kernel_data: KernelData,
+	//	op: BinaryOperator,
+	//	rhs: Expr,
+	//	kernel_ctx: &KernelContext,
+	//) {
+	//	let op = FilterKernelData::new(kernel_data, op, rhs, &self.ctx).into_op();
+	//	self.plan.push(op);
+	//}
 
-	fn add_append_kernel_data_op(
-		&mut self,
-		kernel_data: KernelData,
-		field: &str,
-	) {
-		let dst = self.output.var.lvalue().member(field);
-		let op = AppendKernelData::new(&self.ctx, kernel_data, dst).into_op();
-		self.plan.push(op);
-	}
+	//fn add_append_kernel_data_op(
+	//	&mut self,
+	//	kernel_data: KernelData,
+	//	field: &str,
+	//) {
+	//	let dst = self.output.var.lvalue().member(field);
+	//	let op = AppendKernelData::new(&self.ctx, kernel_data, dst).into_op();
+	//	self.plan.push(op);
+	//}
 
-	fn generate_code(&self) -> CodeGen {
+	pub fn generate_code(&self) -> BpfCode {
 
 		let mut code = CodeGen::new();
 
@@ -111,7 +117,8 @@ impl KernelPlan {
 		let handle_sys_enter = function_builder.build();
 		
 		code.push(handle_sys_enter.definition().into());
-		code
+		code.push(CodeUnit::BpfLicense);
+		BpfCode::new(&code.generate_code())
 	}
 }
 
@@ -159,7 +166,7 @@ pub struct KernelContextBuilder {
 }
 
 impl KernelContextBuilder {
-	fn new_syscall_enter_ctx() -> Self {
+	pub fn new_syscall_enter_ctx() -> Self {
 		let sysenter_args_t: Kind = Kind::array(&Kind::uint32_t(), 6);
 		let ctx_t: Kind = Kind::cstruct(
 				&[
@@ -185,11 +192,11 @@ impl KernelContextBuilder {
 		}
 	}
 
-	fn add_kernel_variable(&mut self, schema: KernelData) {
+	pub fn add_kernel_variable(&mut self, schema: KernelData) {
 		self.kernel_variables.add_kernel_variable(schema);
 	}
 
-	fn build(self) -> KernelContext {
+	pub fn build(self) -> KernelContext {
 		let inner = InnerKernelContext {
 			ctx_t: self.ctx_t,
 			ctx_var: self.ctx_var,
@@ -349,7 +356,7 @@ impl SysEnterField {
 		}.into()
 	}
 
-	fn schema(&self) -> KernelData {
+	pub fn schema(&self) -> KernelData {
 		KernelData::SysEnter(*self)
 	}
 }
@@ -385,7 +392,7 @@ impl CurrentTaskField {
 		}.into()
 	}
 
-	fn schema(&self) -> KernelData {
+	pub fn schema(&self) -> KernelData {
 		KernelData::CurrentTask(*self)
 	}
 }
@@ -414,7 +421,7 @@ pub struct FilterKernelData {
 }
 
 impl FilterKernelData {
-	fn new(
+	pub fn new(
 		kernel_data: KernelData,
 		op: BinaryOperator,
 		rhs: Expr,
@@ -423,7 +430,7 @@ impl FilterKernelData {
 		Self { kernel_data, op, rhs, kernel_ctx: kernel_ctx.clone(), }
 	}
 
-	fn into_op(self) -> KernelOperator {
+	pub fn into_op(self) -> KernelOperator {
 		KernelOperator::FilterKernelData(self)
 	}
 
@@ -443,7 +450,7 @@ pub struct AppendKernelData {
 }
 
 impl AppendKernelData {
-	fn new(
+	pub fn new(
 		kernel_ctx: &KernelContext,
 		kernel_data: KernelData,
 		dst: Lvalue
@@ -455,7 +462,7 @@ impl AppendKernelData {
 		}
 	}
 
-	fn into_op(self) -> KernelOperator {
+	pub fn into_op(self) -> KernelOperator {
 		KernelOperator::AppendKernelData(self)
 	}
 
@@ -473,7 +480,7 @@ pub struct PerfMapBufferAndOutput {
 }
 
 impl PerfMapBufferAndOutput {
-	fn new(
+	pub fn new(
 		ctx: &KernelContext,
 		perf_map: &KernelBpfMap,
 		buffer_map: &KernelBpfMap,
@@ -487,7 +494,7 @@ impl PerfMapBufferAndOutput {
 		}
 	}
 
-	fn into_op(self) -> KernelOperator {
+	pub fn into_op(self) -> KernelOperator {
 		KernelOperator::PerfMapBufferAndOutput(self)
 	}
 
@@ -603,7 +610,7 @@ enum BpfMapType {
 }
 
 #[derive(Clone)]
-struct KernelBpfMap {
+pub struct KernelBpfMap {
 	map_value_t: Kind,
 	map_key_t: Kind,
 	map_t: Kind,
@@ -613,7 +620,23 @@ struct KernelBpfMap {
 }
 
 impl KernelBpfMap {
-	fn perf_event_array(
+	pub fn value_kind(&self) -> Kind {
+		self.map_value_t.clone()
+	}
+
+	pub fn key_kind(&self) -> Kind {
+		self.map_key_t.clone()
+	}
+
+	pub fn map_kind(&self) -> Kind {
+		self.map_t.clone()
+	}
+
+	pub fn map_variable(&self) -> Variable {
+		self.map.clone()
+	}
+
+	pub fn perf_event_array(
 		output_t: &Kind,
 	) -> Self {
 		let map_t = Kind::bpf_map(BpfMap::perf_event_array(
@@ -634,7 +657,7 @@ impl KernelBpfMap {
 		}
 	}
 
-	fn per_cpu_buffer(sz: usize, buffered_kind: &Kind) -> Self {
+	pub fn per_cpu_buffer(sz: usize, buffered_kind: &Kind) -> Self {
 		// There's always only one buffer in each CPU-specific map
 		let map_key_t = Kind::__u32();
 

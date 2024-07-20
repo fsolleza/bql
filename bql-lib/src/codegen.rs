@@ -618,6 +618,7 @@ pub enum CodeUnit {
 	Expr(Expr),
 	If(IfBlock),
 	ScopeBlock(ScopeBlock),
+	BpfLicense,
 	BpfProgramDefinition(BpfProgramDefinition),
 	Return(Expr),
 }
@@ -636,6 +637,9 @@ impl CodeUnit {
 			Self::LvalueAssignment(x) => x.gen_code_unit(),
 			Self::Return(x) => {
 				format!("return {};\n", x.gen_expression())
+			}
+			Self::BpfLicense => {
+				format!("{};\n", r#"char LICENSE[] SEC("license") = "Dual BSD/GPL""#)
 			}
 		}
 	}
