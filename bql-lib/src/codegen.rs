@@ -144,6 +144,13 @@ impl Kind {
 		}
 	}
 
+	pub fn is_struct(&self) -> bool {
+		match &*self.inner {
+			InnerKind::Struct(_) => true,
+			_ => false
+		}
+	}
+
 	pub fn gen_definition(&self) -> String {
 		self.defined.store(true, SeqCst);
 		self.inner.gen_definition()
@@ -473,7 +480,7 @@ pub struct Cast {
 
 impl Cast {
 	pub fn gen_expression(&self) -> String {
-		format!("({}){}", self.typ.gen_signature(), self.expr.gen_expression())
+		format!("(({}){})", self.typ.gen_signature(), self.expr.gen_expression())
 	}
 }
 
@@ -1046,6 +1053,10 @@ impl InnerVariable {
 		if self.typ.is_bpf_map() {
 			s.push_str(" SEC(\".maps\")");
 		}
+		else if self.typ.is_struct() {
+			// Zero initialize the struct
+			s.push_str(" = {0}");
+		}
 		s
 	}
 
@@ -1267,15 +1278,30 @@ impl PerCpuArray {
 	}
 
 	pub fn gen_definition(&self) -> String {
-		let map_type = format!("per_cpu_array_t_{}", self.id);
-		let mut s: String = "typedef struct {\n".into();
+		let mut s: String = "".into();
+
+		if !self.key.is_defined() {
+			s.push_str(&self.key.gen_definition());
+			s.push_str(";\n");
+		}
+
+		if !self.value.is_defined() {
+			s.push_str(&self.value.gen_definition());
+			s.push_str(";\n");
+		}
+
+
+		s.push_str("typedef struct {\n");
+		s.push_str("__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);\n");
+
 		let k = format!("__type(key, {});\n", self.key.gen_signature());
 		let v = format!("__type(value, {});\n", self.value.gen_signature());
-		let e = format!("__max_entries(max_entries, {});\n", self.max_entries);
-		s.push_str("__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);\n");
+		let e = format!("__uint(max_entries, {});\n", self.max_entries);
 		s.push_str(&k);
 		s.push_str(&v);
 		s.push_str(&e);
+
+		let map_type = format!("per_cpu_array_t_{}", self.id);
 		s.push_str(&format!("}} {}", map_type));
 		s
 	}

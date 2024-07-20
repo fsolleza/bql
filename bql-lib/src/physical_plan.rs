@@ -133,7 +133,6 @@ impl PlanOutput {
 	pub fn variable_definition(&self) -> Vec<CodeUnit> {
 		let mut vec: Vec<CodeUnit> = Vec::new();
 		vec.push(self.var.definition().into());
-		vec.push(self.var.lvalue().assign(&Expr::cconst("{0}")).into());
 		vec
 	}
 }
@@ -376,9 +375,12 @@ impl CurrentTaskField {
 				let args = vec![
 					dst.expr().reference(),
 					sizeof.call(vec![dst.clone().expr()]),
-					func.call(Vec::new()).ref_member("pid").reference()
+					func.call(Vec::new())
+						.cast(Kind::other("struct task_struct *".into()))
+						.ref_member("pid")
+						.reference()
 				];
-				func.call(args)
+				read.call(args)
 			}
 		}.into()
 	}
@@ -607,7 +609,6 @@ struct KernelBpfMap {
 	map_t: Kind,
 	map: Variable,
 	map_type: BpfMapType,
-
 	buffer_size: Option<usize>,
 }
 
@@ -685,6 +686,7 @@ impl KernelBpfMap {
 #[cfg(test)]
 mod test {
 	use super::*;
+	use crate::executor;
 
 	#[test]
 	fn test() {
@@ -695,7 +697,6 @@ mod test {
 				("start_time".into(), Kind::uint64_t()),
 				],
 		);
-
 
 		let mut kernel_ctx_builder =
 			BpfContext::SyscallEnter.kernel_context_builder();
@@ -742,7 +743,9 @@ mod test {
 		plan.add_op(output_op);
 
 		let code = plan.generate_code();
-		println!("{}", code.generate_code());
+		//println!("{}", code.generate_code());
 
+		let executor = executor::BpfExecutor::new(&code.generate_code());
+		let obj = executor.compile();
 	}
 }

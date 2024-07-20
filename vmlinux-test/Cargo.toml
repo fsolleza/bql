@@ -1,13 +1,8 @@
 [package]
-name = "bql-lib"
+name = "vmlinux-test"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rand = "0.8.5"
-clang-format = "0.3.0"
-libbpf-rs = "0.23.3"
-libc = "0.2"
-crossbeam = "0.8"

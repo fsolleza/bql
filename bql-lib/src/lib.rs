@@ -4,3 +4,4 @@
 pub mod codegen;
 pub mod bpf;
 pub mod physical_plan;
+pub mod executor;
