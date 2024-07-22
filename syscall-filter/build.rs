@@ -2,12 +2,12 @@ use libbpf_cargo::SkeletonBuilder;
 use std::env;
 use std::path::PathBuf;
 
-const SRC: &str = "src/bpf/syscall_latency.bpf.c";
+const SRC: &str = "src/bpf/syscall_filter.bpf.c";
 
 fn main() {
     let mut out =
         PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR must be set in build script"));
-    out.push("syscall_latency.skel.rs");
+    out.push("syscall_filter.skel.rs");
     SkeletonBuilder::new()
         .source(SRC)
         .build_and_generate(&out)

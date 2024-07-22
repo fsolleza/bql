@@ -24,7 +24,8 @@ path_rocksdb           := $(path_base)/bpf-sql/rocksdb-app # rocksdb app writes 
 bin_rocksdb_app        := ./rocksdb-application/target/release/rocksdb-application
 
 
-bin_syscall         := ./syscall-latency/target/release/syscall-latency
+bin_syscall         := ./syscall-filter/target/release/syscall-filter
+bin_histogram	    := ./syscall-histogram/target/release/syscall-histogram
 
 
 ###############
@@ -57,9 +58,13 @@ rocksdb-application:
 			--db-path $(path_rocksdb))
 
 
-.PHONY: syscall-latency-rocksdb
-syscall-latency-rocksdb: do-sudo
+.PHONY: syscall-filter-rocksdb
+syscall-filter-rocksdb: do-sudo
 	$(call bg, sudo $(bin_syscall) --pid $$(pgrep rocksdb-applica))
+.PHONY: syscall-histogram-rocksdb
+syscall-histogram-rocksdb: do-sudo
+	$(call bg, sudo $(bin_histogram) --pid $$(pgrep rocksdb-applica))
+
 
 ###################
 ## Build targets ##
@@ -77,9 +82,9 @@ define rust_build
 	stty sane
 endef
 
-.PHONY: build-syscall-latency
-build-syscall-latency: tmp-dir
-	$(call rust_build,syscall-latency,,)
+.PHONY: build-syscall-filter
+build-syscall-filter: tmp-dir
+	$(call rust_build,syscall-filter,,)
 
 .PHONY: build-rocksdb-application
 build-rocksdb-application: tmp-dir

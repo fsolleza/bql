@@ -16,10 +16,10 @@ use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering::SeqCst};
 use std::thread;
 use syscall::SyscallEventBuffer;
 
-mod syscall_latency {
-	include!(concat!(env!("OUT_DIR"), "/syscall_latency.skel.rs"));
+mod syscall_filter {
+	include!(concat!(env!("OUT_DIR"), "/syscall_filter.skel.rs"));
 }
-use syscall_latency::*;
+use syscall_filter::*;
 
 lazy_static! {
 	static ref EVENT_CHAN: (Sender<SyscallEventBuffer>, Receiver<SyscallEventBuffer>) =
@@ -83,7 +83,7 @@ fn lost_event_handler(cpu: i32, count: u64) {
 
 fn attach_and_run(target_pid: u32) -> Result<()> {
 	println!("Attaching");
-	let skel_builder = SyscallLatencySkelBuilder::default();
+	let skel_builder = SyscallFilterSkelBuilder::default();
 	let mut open_skel = skel_builder.open()?;
 	open_skel.rodata().my_pid = process::id();
 	open_skel.rodata().target_pid = target_pid;
