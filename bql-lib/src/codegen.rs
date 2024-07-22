@@ -2,8 +2,8 @@ use rand::prelude::*;
 use std::{
 	collections::HashMap,
 	sync::{
+		atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
 		Arc,
-		atomic::{AtomicU64, AtomicBool, Ordering::SeqCst},
 	},
 };
 
@@ -68,26 +68,25 @@ impl std::ops::Deref for Kind {
 }
 
 impl Kind {
-
 	fn new(k: InnerKind) -> Self {
 		let defined = Arc::new(AtomicBool::new(false));
 		match k {
-			InnerKind::Void       => defined.store(true, SeqCst),
-			InnerKind::Char       => defined.store(true, SeqCst),
-			InnerKind::Int        => defined.store(true, SeqCst),
-			InnerKind::__U32      => defined.store(true, SeqCst),
-			InnerKind::Uint32T    => defined.store(true, SeqCst),
-			InnerKind::Int32T     => defined.store(true, SeqCst),
-			InnerKind::__U64      => defined.store(true, SeqCst),
-			InnerKind::Uint64T    => defined.store(true, SeqCst),
-			InnerKind::Int64T     => defined.store(true, SeqCst),
-			InnerKind::SizeT      => defined.store(true, SeqCst),
-			InnerKind::Bool       => defined.store(true, SeqCst),
+			InnerKind::Void => defined.store(true, SeqCst),
+			InnerKind::Char => defined.store(true, SeqCst),
+			InnerKind::Int => defined.store(true, SeqCst),
+			InnerKind::__U32 => defined.store(true, SeqCst),
+			InnerKind::Uint32T => defined.store(true, SeqCst),
+			InnerKind::Int32T => defined.store(true, SeqCst),
+			InnerKind::__U64 => defined.store(true, SeqCst),
+			InnerKind::Uint64T => defined.store(true, SeqCst),
+			InnerKind::Int64T => defined.store(true, SeqCst),
+			InnerKind::SizeT => defined.store(true, SeqCst),
+			InnerKind::Bool => defined.store(true, SeqCst),
 			InnerKind::Pointer(_) => defined.store(true, SeqCst),
-			InnerKind::Struct(_)  => {},
-			InnerKind::Array(_)   => {},
-			InnerKind::BpfMap(_)  => defined.store(true, SeqCst),
-			InnerKind::Other(_)   => defined.store(true, SeqCst),
+			InnerKind::Struct(_) => {}
+			InnerKind::Array(_) => {}
+			InnerKind::BpfMap(_) => defined.store(true, SeqCst),
+			InnerKind::Other(_) => defined.store(true, SeqCst),
 		}
 
 		Self {
@@ -100,19 +99,45 @@ impl Kind {
 		self.defined.load(SeqCst)
 	}
 
-	pub fn void() -> Self { Kind::new(InnerKind::Void) }
-	pub fn int() -> Self { Kind::new(InnerKind::Int) }
-	pub fn char() -> Self { Kind::new(InnerKind::Char) }
-	pub fn __u32() -> Self { Kind::new(InnerKind::__U32) }
-	pub fn __u64() -> Self { Kind::new(InnerKind::__U64) }
-	pub fn uint32_t() -> Self { Kind::new(InnerKind::Uint32T) }
-	pub fn uint64_t() -> Self { Kind::new(InnerKind::Uint64T) }
-	pub fn int32_t() -> Self { Kind::new(InnerKind::Int32T) }
-	pub fn int64_t() -> Self { Kind::new(InnerKind::Int64T) }
-	pub fn size_t() -> Self { Kind::new(InnerKind::SizeT) }
-	pub fn bpf_map(m: BpfMap) -> Self { Kind::new(InnerKind::BpfMap(m)) }
-	pub fn other(s: String) -> Self {   Kind::new(InnerKind::Other(s)) }
-	pub fn bool() -> Self { Kind::new(InnerKind::Bool) }
+	pub fn void() -> Self {
+		Kind::new(InnerKind::Void)
+	}
+	pub fn int() -> Self {
+		Kind::new(InnerKind::Int)
+	}
+	pub fn char() -> Self {
+		Kind::new(InnerKind::Char)
+	}
+	pub fn __u32() -> Self {
+		Kind::new(InnerKind::__U32)
+	}
+	pub fn __u64() -> Self {
+		Kind::new(InnerKind::__U64)
+	}
+	pub fn uint32_t() -> Self {
+		Kind::new(InnerKind::Uint32T)
+	}
+	pub fn uint64_t() -> Self {
+		Kind::new(InnerKind::Uint64T)
+	}
+	pub fn int32_t() -> Self {
+		Kind::new(InnerKind::Int32T)
+	}
+	pub fn int64_t() -> Self {
+		Kind::new(InnerKind::Int64T)
+	}
+	pub fn size_t() -> Self {
+		Kind::new(InnerKind::SizeT)
+	}
+	pub fn bpf_map(m: BpfMap) -> Self {
+		Kind::new(InnerKind::BpfMap(m))
+	}
+	pub fn other(s: String) -> Self {
+		Kind::new(InnerKind::Other(s))
+	}
+	pub fn bool() -> Self {
+		Kind::new(InnerKind::Bool)
+	}
 
 	pub fn array(k: &Kind, sz: usize) -> Self {
 		Kind::new(InnerKind::Array(Array::new(k, sz)))
@@ -133,21 +158,21 @@ impl Kind {
 	pub fn is_pointer(&self) -> bool {
 		match &*self.inner {
 			InnerKind::Pointer(_) => true,
-			_ => false
+			_ => false,
 		}
 	}
 
 	pub fn is_bpf_map(&self) -> bool {
 		match &*self.inner {
 			InnerKind::BpfMap(_) => true,
-			_ => false
+			_ => false,
 		}
 	}
 
-	pub fn is_struct(&self) -> bool {
+	pub fn is_cstruct(&self) -> bool {
 		match &*self.inner {
 			InnerKind::Struct(_) => true,
-			_ => false
+			_ => false,
 		}
 	}
 
@@ -159,7 +184,14 @@ impl Kind {
 	pub fn as_array_ref(&self) -> Option<&Array> {
 		match &*self.inner {
 			InnerKind::Array(x) => Some(&x),
-			_ => None
+			_ => None,
+		}
+	}
+
+	pub fn as_cstruct_ref(&self) -> Option<&Struct> {
+		match &*self.inner {
+			InnerKind::Struct(x) => Some(&x),
+			_ => None,
 		}
 	}
 }
@@ -185,47 +217,45 @@ pub enum InnerKind {
 }
 
 impl InnerKind {
-
 	pub fn alignment(&self) -> Option<usize> {
 		match self {
-			Self::Void           => None,
-			Self::Char           => Some(1),
-			Self::Bool           => Some(1),
-			Self::Int            => Some(4),
-			Self::__U32          => Some(4),
-			Self::Uint32T        => Some(4),
-			Self::Int32T         => Some(4),
-			Self::__U64          => Some(8),
-			Self::Uint64T        => Some(8),
-			Self::Int64T         => Some(8),
-			Self::SizeT          => Some(8),
-			Self::Struct(x)      => Some(x.alignment()),
-			Self::Array(a)       => Some(a.alignment()),
-			Self::Pointer(p)     => Some(8),
-			Self::BpfMap(BpfMap) => unimplemented!(),
-			Self::Other(String)  => unimplemented!(),
-
+			Self::Void => None,
+			Self::Char => Some(1),
+			Self::Bool => Some(1),
+			Self::Int => Some(4),
+			Self::__U32 => Some(4),
+			Self::Uint32T => Some(4),
+			Self::Int32T => Some(4),
+			Self::__U64 => Some(8),
+			Self::Uint64T => Some(8),
+			Self::Int64T => Some(8),
+			Self::SizeT => Some(8),
+			Self::Struct(x) => Some(x.alignment()),
+			Self::Array(a) => Some(a.alignment()),
+			Self::Pointer(p) => Some(8),
+			Self::BpfMap(_) => unimplemented!(),
+			Self::Other(_) => unimplemented!(),
 		}
 	}
 
 	pub fn size(&self) -> Option<usize> {
 		match self {
-			Self::Void           => None,
-			Self::Char           => Some(1),
-			Self::Bool           => Some(1),
-			Self::Int            => Some(4),
-			Self::__U32          => Some(4),
-			Self::Uint32T        => Some(4),
-			Self::Int32T         => Some(4),
-			Self::__U64          => Some(8),
-			Self::Uint64T        => Some(8),
-			Self::Int64T         => Some(8),
-			Self::SizeT          => Some(8),
-			Self::Struct(x)      => Some(x.size()),
-			Self::Array(a)       => Some(a.size()),
-			Self::Pointer(p)     => Some(8),
-			Self::BpfMap(BpfMap) => unimplemented!(),
-			Self::Other(String)  => unimplemented!(),
+			Self::Void => None,
+			Self::Char => Some(1),
+			Self::Bool => Some(1),
+			Self::Int => Some(4),
+			Self::__U32 => Some(4),
+			Self::Uint32T => Some(4),
+			Self::Int32T => Some(4),
+			Self::__U64 => Some(8),
+			Self::Uint64T => Some(8),
+			Self::Int64T => Some(8),
+			Self::SizeT => Some(8),
+			Self::Struct(x) => Some(x.size()),
+			Self::Array(a) => Some(a.size()),
+			Self::Pointer(p) => Some(8),
+			Self::BpfMap(_) => unimplemented!(),
+			Self::Other(_) => unimplemented!(),
 		}
 	}
 
@@ -292,61 +322,112 @@ impl Pointer {
 /// a variable then send the variable into the expr.
 #[derive(Clone)]
 pub struct Expr {
-	inner: Arc<InnerExpr>
+	inner: Arc<InnerExpr>,
 }
 
 impl Expr {
-	pub fn null() ->           Self { Self { inner: Arc::new(InnerExpr::Scalar(Scalar::Null)) } }
-	pub fn float(x: f64) ->    Self { Self { inner: Arc::new(InnerExpr::Scalar(Scalar::Float(x))) } }
-	pub fn uint(x: u64) ->     Self { Self { inner: Arc::new(InnerExpr::Scalar(Scalar::Uint(x))) } }
-	pub fn int(x: i64) ->      Self { Self { inner: Arc::new(InnerExpr::Scalar(Scalar::Int(x))) } }
-	pub fn bool(x: bool) ->    Self { Self { inner: Arc::new(InnerExpr::Scalar(Scalar::Bool(x))) } }
-	pub fn cstring(x: &str) -> Self { Self { inner: Arc::new(InnerExpr::Scalar(Scalar::Cstring(x.into()))) } }
-	pub fn cconst(x: &str) ->  Self { Self { inner: Arc::new(InnerExpr::Scalar(Scalar::Cconst(x.into()))) } }
+	pub fn null() -> Self {
+		Self {
+			inner: Arc::new(InnerExpr::Scalar(Scalar::Null)),
+		}
+	}
+	pub fn float(x: f64) -> Self {
+		Self {
+			inner: Arc::new(InnerExpr::Scalar(Scalar::Float(x))),
+		}
+	}
+	pub fn uint(x: u64) -> Self {
+		Self {
+			inner: Arc::new(InnerExpr::Scalar(Scalar::Uint(x))),
+		}
+	}
+	pub fn int(x: i64) -> Self {
+		Self {
+			inner: Arc::new(InnerExpr::Scalar(Scalar::Int(x))),
+		}
+	}
+	pub fn bool(x: bool) -> Self {
+		Self {
+			inner: Arc::new(InnerExpr::Scalar(Scalar::Bool(x))),
+		}
+	}
+	pub fn cstring(x: &str) -> Self {
+		Self {
+			inner: Arc::new(InnerExpr::Scalar(Scalar::Cstring(x.into()))),
+		}
+	}
+	pub fn cconst(x: &str) -> Self {
+		Self {
+			inner: Arc::new(InnerExpr::Scalar(Scalar::Cconst(x.into()))),
+		}
+	}
 
 	pub fn scalar(x: Scalar) -> Self {
-		Self { inner: InnerExpr::Scalar(x).into() }
+		Self {
+			inner: InnerExpr::Scalar(x).into(),
+		}
 	}
 
 	pub fn deref(self) -> Self {
 		Self {
-			inner: InnerExpr::Deref( Deref {
+			inner: InnerExpr::Deref(Deref {
 				expr: Box::new(self),
-			}).into()
+			})
+			.into(),
 		}
 	}
 
 	pub fn cast(self, typ: Kind) -> Self {
-		Self { inner: InnerExpr::Cast(Cast { expr: Box::new(self), typ }).into() }
+		Self {
+			inner: InnerExpr::Cast(Cast {
+				expr: Box::new(self),
+				typ,
+			})
+			.into(),
+		}
 	}
 
 	pub fn reference(self) -> Self {
-		Self { inner: InnerExpr::Reference(Reference::new(Box::new(self))).into() }
+		Self {
+			inner: InnerExpr::Reference(Reference::new(Box::new(self))).into(),
+		}
 	}
 
 	pub fn function_call(x: &Function, args: Vec<Expr>) -> Self {
-		Self { inner: InnerExpr::FunctionCall(FunctionCall{ func: x.clone(), args }).into() }
+		Self {
+			inner: InnerExpr::FunctionCall(FunctionCall {
+				func: x.clone(),
+				args,
+			})
+			.into(),
+		}
 	}
 
 	pub fn variable(x: &Variable) -> Self {
 		Self {
-			inner: InnerExpr::Variable(x.clone()).into()
+			inner: InnerExpr::Variable(x.clone()).into(),
 		}
 	}
 
 	pub fn member(self, member: &str) -> Self {
-		Self { inner: InnerExpr::Member(Member::new(self, member, false)).into() }
+		Self {
+			inner: InnerExpr::Member(Member::new(self, member, false)).into(),
+		}
 	}
 
 	pub fn ref_member(self, member: &str) -> Self {
-		Self { inner: InnerExpr::Member(Member::new(self, member, true)).into() }
+		Self {
+			inner: InnerExpr::Member(Member::new(self, member, true)).into(),
+		}
 	}
 
 	pub fn binary(l: Expr, op: BinaryOperator, r: Expr) -> Self {
 		Self {
-			inner: InnerExpr::BinaryExpr(
-					   BinaryExpr { lr: Box::new((l, r)), op }
-			).into()
+			inner: InnerExpr::BinaryExpr(BinaryExpr {
+				lr: Box::new((l, r)),
+				op,
+			})
+			.into(),
 		}
 	}
 
@@ -355,7 +436,8 @@ impl Expr {
 			inner: InnerExpr::UnaryExpr(UnaryExpr {
 				expr: Box::new(expr),
 				op,
-			}).into()
+			})
+			.into(),
 		}
 	}
 }
@@ -394,13 +476,27 @@ impl InnerExpr {
 		}
 	}
 
-	pub fn null() -> Self { Self::Scalar(Scalar::Null) }
-	pub fn float(x: f64) -> Self { Self::Scalar(Scalar::Float(x)) }
-	pub fn uint(x: u64) -> Self { Self::Scalar(Scalar::Uint(x)) }
-	pub fn int(x: i64) -> Self { Self::Scalar(Scalar::Int(x)) }
-	pub fn bool(x: bool) -> Self { Self::Scalar(Scalar::Bool(x)) }
-	pub fn cstring(x: &str) -> Self { Self::Scalar(Scalar::Cstring(x.into())) }
-	pub fn cconst(x: &str) -> Self { Self::Scalar(Scalar::Cconst(x.into())) }
+	pub fn null() -> Self {
+		Self::Scalar(Scalar::Null)
+	}
+	pub fn float(x: f64) -> Self {
+		Self::Scalar(Scalar::Float(x))
+	}
+	pub fn uint(x: u64) -> Self {
+		Self::Scalar(Scalar::Uint(x))
+	}
+	pub fn int(x: i64) -> Self {
+		Self::Scalar(Scalar::Int(x))
+	}
+	pub fn bool(x: bool) -> Self {
+		Self::Scalar(Scalar::Bool(x))
+	}
+	pub fn cstring(x: &str) -> Self {
+		Self::Scalar(Scalar::Cstring(x.into()))
+	}
+	pub fn cconst(x: &str) -> Self {
+		Self::Scalar(Scalar::Cconst(x.into()))
+	}
 
 	//pub fn deref(self) -> Self {
 	//	Self::Deref( Deref {
@@ -480,7 +576,11 @@ pub struct Cast {
 
 impl Cast {
 	pub fn gen_expression(&self) -> String {
-		format!("(({}){})", self.typ.gen_signature(), self.expr.gen_expression())
+		format!(
+			"(({}){})",
+			self.typ.gen_signature(),
+			self.expr.gen_expression()
+		)
 	}
 }
 
@@ -492,7 +592,11 @@ pub struct Member {
 
 impl Member {
 	pub fn new(expr: Expr, member: &str, is_ref: bool) -> Self {
-		Member { expr: Box::new(expr), member: member.into(), is_ref }
+		Member {
+			expr: Box::new(expr),
+			member: member.into(),
+			is_ref,
+		}
 	}
 
 	pub fn gen_expression(&self) -> String {
@@ -537,21 +641,23 @@ pub struct BinaryExpr {
 impl BinaryExpr {
 	pub fn gen_expression(&self) -> String {
 		let mut s = String::new();
-		format!("({}) {} ({})",
-			   self.lr.0.gen_expression(),
-			   self.op.gen_symbol(),
-			   self.lr.1.gen_expression())
+		format!(
+			"({}) {} ({})",
+			self.lr.0.gen_expression(),
+			self.op.gen_symbol(),
+			self.lr.1.gen_expression()
+		)
 	}
 }
 
 pub enum UnaryOperator {
-	Not
+	Not,
 }
 
 impl UnaryOperator {
 	fn gen_symbol(&self) -> String {
 		match self {
-			Self::Not => "!".into()
+			Self::Not => "!".into(),
 		}
 	}
 }
@@ -564,9 +670,7 @@ pub struct UnaryExpr {
 impl UnaryExpr {
 	pub fn gen_expression(&self) -> String {
 		let mut s = String::new();
-		format!("{}({})",
-			   self.op.gen_symbol(),
-			   self.expr.gen_expression())
+		format!("{}({})", self.op.gen_symbol(), self.expr.gen_expression())
 	}
 }
 
@@ -603,9 +707,7 @@ impl BpfProgramDefinition {
 
 impl Into<BpfProgramDefinition> for &BpfProgram {
 	fn into(self) -> BpfProgramDefinition {
-		BpfProgramDefinition {
-			bpf: self.clone(),
-		}
+		BpfProgramDefinition { bpf: self.clone() }
 	}
 }
 
@@ -639,7 +741,10 @@ impl CodeUnit {
 				format!("return {};\n", x.gen_expression())
 			}
 			Self::BpfLicense => {
-				format!("{};\n", r#"char LICENSE[] SEC("license") = "Dual BSD/GPL""#)
+				format!(
+					"{};\n",
+					r#"char LICENSE[] SEC("license") = "Dual BSD/GPL""#
+				)
 			}
 		}
 	}
@@ -693,7 +798,6 @@ impl Into<CodeUnit> for LvalueAssignment {
 	}
 }
 
-
 pub enum Include {
 	FilePath(String),
 	Library(String),
@@ -709,7 +813,7 @@ impl Include {
 }
 
 pub struct KindDefinition {
-	typ: Kind
+	typ: Kind,
 }
 
 impl KindDefinition {
@@ -722,7 +826,7 @@ impl KindDefinition {
 }
 
 pub struct VariableDefinition {
-	var: Variable
+	var: Variable,
 }
 
 impl VariableDefinition {
@@ -782,14 +886,14 @@ impl ScopeBlock {
 
 #[derive(Clone)]
 pub struct FunctionDeclaration {
-	inner: Arc<InnerFunctionDeclaration>
+	inner: Arc<InnerFunctionDeclaration>,
 }
 
 impl FunctionDeclaration {
 	pub fn new(return_type: &Kind, argument_types: Vec<Kind>) -> Self {
 		let inner = InnerFunctionDeclaration::new(return_type, argument_types);
 		Self {
-			inner: inner.into()
+			inner: inner.into(),
 		}
 	}
 
@@ -818,9 +922,11 @@ pub struct InnerFunctionDeclaration {
 
 impl InnerFunctionDeclaration {
 	pub fn new(return_type: &Kind, argument_types: Vec<Kind>) -> Self {
-		let arg_vars: Vec<Variable> = argument_types.iter().cloned().map(|x| {
-			Variable::new(&x, None).into()
-		}).collect();
+		let arg_vars: Vec<Variable> = argument_types
+			.iter()
+			.cloned()
+			.map(|x| Variable::new(&x, None).into())
+			.collect();
 
 		Self {
 			ret: return_type.clone(),
@@ -857,14 +963,14 @@ impl FunctionBuilder {
 		Function::from_optional_parts(
 			self.name.as_str(),
 			Some(self.declaration),
-			Some(self.scope_block)
+			Some(self.scope_block),
 		)
 	}
 }
 
 #[derive(Clone)]
 pub struct Function {
-	inner: Arc<InnerFunction>
+	inner: Arc<InnerFunction>,
 }
 
 impl std::ops::Deref for Function {
@@ -882,12 +988,14 @@ impl Function {
 	pub fn from_optional_parts(
 		name: &str,
 		declaration: Option<FunctionDeclaration>,
-		definition: Option<ScopeBlock>
+		definition: Option<ScopeBlock>,
 	) -> Self {
 		Self {
 			inner: Arc::new(InnerFunction {
-				name: name.into(), declaration, definition
-			})
+				name: name.into(),
+				declaration,
+				definition,
+			}),
 		}
 	}
 
@@ -915,7 +1023,6 @@ pub struct InnerFunction {
 }
 
 impl InnerFunction {
-
 	pub fn get_arg(&self, idx: usize) -> Option<Variable> {
 		self.declaration.as_ref()?.get_arg(idx)
 	}
@@ -949,7 +1056,11 @@ impl InnerFunction {
 
 	pub fn gen_definition(&self) -> Option<String> {
 		let defn = self.definition.as_ref()?;
-		Some(format!("{} {}", self.gen_declaration()?, defn.gen_code_block()))
+		Some(format!(
+			"{} {}",
+			self.gen_declaration()?,
+			defn.gen_code_block()
+		))
 	}
 
 	pub fn gen_call(&self, args: &[Expr]) -> String {
@@ -984,7 +1095,7 @@ impl Into<String> for Qualifier {
 
 #[derive(Clone)]
 pub struct Variable {
-	inner: Arc<InnerVariable>
+	inner: Arc<InnerVariable>,
 }
 
 impl std::ops::Deref for Variable {
@@ -995,7 +1106,6 @@ impl std::ops::Deref for Variable {
 }
 
 impl Variable {
-
 	pub fn new(typ: &Kind, qualifiers: Option<&[Qualifier]>) -> Self {
 		let id = VARID.fetch_add(1, SeqCst);
 		Self::new_with_id(typ, qualifiers, id)
@@ -1015,8 +1125,8 @@ impl Variable {
 						None => None,
 						Some(x) => Some(x.into()),
 					}
-				}
-			})
+				},
+			}),
 		}
 	}
 
@@ -1031,6 +1141,10 @@ impl Variable {
 	pub fn expr(&self) -> Expr {
 		Expr::variable(self)
 	}
+
+	pub fn name(&self) -> String {
+		self.inner.name()
+	}
 }
 
 pub struct InnerVariable {
@@ -1040,6 +1154,10 @@ pub struct InnerVariable {
 }
 
 impl InnerVariable {
+	fn name(&self) -> String {
+		format!("var_{}", self.id)
+	}
+
 	fn gen_definition(&self) -> String {
 		let mut string_qualifiers = String::new();
 		if let Some(qualifiers) = self.qualifiers.as_ref() {
@@ -1056,8 +1174,7 @@ impl InnerVariable {
 		);
 		if self.typ.is_bpf_map() {
 			s.push_str(" SEC(\".maps\")");
-		}
-		else if self.typ.is_struct() {
+		} else if self.typ.is_cstruct() {
 			// Zero initialize the struct
 			s.push_str(" = {0}");
 		}
@@ -1077,7 +1194,6 @@ pub struct Array {
 }
 
 impl Array {
-
 	pub fn alignment(&self) -> usize {
 		self.typ.alignment().unwrap()
 	}
@@ -1096,7 +1212,11 @@ impl Array {
 	}
 
 	pub fn new_with_id(typ: &Kind, sz: usize, id: u64) -> Self {
-		Self { typ: typ.clone(), sz, id }
+		Self {
+			typ: typ.clone(),
+			sz,
+			id,
+		}
 	}
 
 	pub fn gen_signature(&self) -> String {
@@ -1110,12 +1230,13 @@ impl Array {
 			s.push_str(&format!("{};\n", self.typ.gen_definition()));
 		}
 
-		s.push_str(&format!("typedef {} ArrKind_{}[{}]",
-				self.typ.gen_signature(),
-				self.id,
-				self.sz));
+		s.push_str(&format!(
+			"typedef {} ArrKind_{}[{}]",
+			self.typ.gen_signature(),
+			self.id,
+			self.sz
+		));
 		s
-
 	}
 }
 
@@ -1129,7 +1250,6 @@ pub struct Struct {
 }
 
 impl Struct {
-
 	pub fn offsetof(&self, field: &String) -> Option<usize> {
 		self.offsets.get(field).copied()
 	}
@@ -1146,8 +1266,35 @@ impl Struct {
 		Self::new_with_id(fields, TYPEID.fetch_add(1, SeqCst))
 	}
 
-	pub fn new_with_id(fields: &[(String, Kind)], id: u64) -> Self {
+	pub fn read_fields<'a, 'b>(
+		&'a self,
+		b: &'b [u8],
+	) -> Vec<(&'a str, &'b [u8])> {
+		let mut result = Vec::new();
+		for (f, _) in self.fields.iter() {
+			let bytes = self.read(f, b).unwrap();
+			result.push((f.as_str(), bytes));
+		}
+		result
+	}
 
+	pub fn read<'a>(
+		&self,
+		field: &String,
+		bytes: &'a [u8],
+	) -> Option<&'a [u8]> {
+		let offset = self.offsetof(field)?;
+		let mut sz = 0;
+		for (f, k) in self.fields.iter() {
+			if f == field {
+				sz = k.size().unwrap() as usize;
+				break;
+			}
+		}
+		Some(&bytes[offset..offset + sz])
+	}
+
+	pub fn new_with_id(fields: &[(String, Kind)], id: u64) -> Self {
 		// Calculate offsets
 		let mut offsets = HashMap::new();
 		let mut align = 0;
@@ -1230,11 +1377,11 @@ impl BpfMap {
 		}
 	}
 
-	pub fn per_cpu_array(key: &Kind, value: &Kind, max_entries: u64,) -> Self {
+	pub fn per_cpu_array(key: &Kind, value: &Kind, max_entries: u64) -> Self {
 		Self::PerCpuArray(PerCpuArray::new(key, value, max_entries))
 	}
 
-	pub fn perf_event_array(key_size: Scalar, value_size: Scalar,) -> Self {
+	pub fn perf_event_array(key_size: Scalar, value_size: Scalar) -> Self {
 		Self::PerfEventArray(PerfEventArray::new(key_size, value_size))
 	}
 }
@@ -1264,16 +1411,17 @@ impl PerCpuArray {
 		key: &Kind,
 		value: &Kind,
 		max_entries: u64,
-		id: u64
+		id: u64,
 	) -> Self {
-		Self { key: key.clone(), value: value.clone(), max_entries, id }
+		Self {
+			key: key.clone(),
+			value: value.clone(),
+			max_entries,
+			id,
+		}
 	}
 
-	pub fn new(
-		key: &Kind,
-		value: &Kind,
-		max_entries: u64,
-	) -> Self {
+	pub fn new(key: &Kind, value: &Kind, max_entries: u64) -> Self {
 		Self::new_with_id(key, value, max_entries, TYPEID.fetch_add(1, SeqCst))
 	}
 
@@ -1293,7 +1441,6 @@ impl PerCpuArray {
 			s.push_str(&self.value.gen_definition());
 			s.push_str(";\n");
 		}
-
 
 		s.push_str("typedef struct {\n");
 		s.push_str("__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);\n");
@@ -1319,21 +1466,17 @@ pub struct PerfEventArray {
 }
 
 impl PerfEventArray {
-	pub fn new_with_id(
-		key_size: Scalar,
-		value_size: Scalar,
-		id: u64
-	) -> Self {
-		Self { key_size, value_size, id }
+	pub fn new_with_id(key_size: Scalar, value_size: Scalar, id: u64) -> Self {
+		Self {
+			key_size,
+			value_size,
+			id,
+		}
 	}
 
-	pub fn new(
-		key_size: Scalar,
-		value_size: Scalar,
-	) -> Self {
+	pub fn new(key_size: Scalar, value_size: Scalar) -> Self {
 		Self::new_with_id(key_size, value_size, TYPEID.fetch_add(1, SeqCst))
 	}
-
 
 	pub fn gen_signature(&self) -> String {
 		format!("perf_event_array_t_{}", self.id)
@@ -1342,8 +1485,12 @@ impl PerfEventArray {
 	pub fn gen_definition(&self) -> String {
 		let map_type = self.gen_signature();
 		let mut s: String = "typedef struct {\n".into();
-		let k = format!("__uint(key_size, {});\n", self.key_size.gen_expression());
-		let v = format!("__uint(value_size, {});\n", self.value_size.gen_expression());
+		let k =
+			format!("__uint(key_size, {});\n", self.key_size.gen_expression());
+		let v = format!(
+			"__uint(value_size, {});\n",
+			self.value_size.gen_expression()
+		);
 		s.push_str("__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);\n");
 		s.push_str(&k);
 		s.push_str(&v);
@@ -1359,13 +1506,17 @@ struct InnerBpfProgram {
 
 #[derive(Clone)]
 pub struct BpfProgram {
-	inner: Arc<InnerBpfProgram>
+	inner: Arc<InnerBpfProgram>,
 }
 
 impl BpfProgram {
 	pub fn from_function(func: Function, hook: &str) -> Self {
 		Self {
-			inner: InnerBpfProgram { func, hook: hook.into() }.into()
+			inner: InnerBpfProgram {
+				func,
+				hook: hook.into(),
+			}
+			.into(),
 		}
 	}
 
@@ -1373,20 +1524,22 @@ impl BpfProgram {
 		func_name: &str,
 		decl: FunctionDeclaration,
 		def: ScopeBlock,
-		hook: &str
+		hook: &str,
 	) -> Self {
 		let func = Function::new_from_required_parts(func_name, decl, def);
 		Self::from_function(func, hook)
 	}
 
 	pub fn definition(&self) -> BpfProgramDefinition {
-		BpfProgramDefinition {
-			bpf: self.clone()
-		}
+		BpfProgramDefinition { bpf: self.clone() }
 	}
 
 	pub fn gen_definition(&self) -> String {
-		format!("SEC(\"{}\")\n{}", self.inner.hook, self.inner.func.gen_definition().unwrap())
+		format!(
+			"SEC(\"{}\")\n{}",
+			self.inner.hook,
+			self.inner.func.gen_definition().unwrap()
+		)
 	}
 
 	pub fn get_arg(&self, idx: usize) -> Variable {
@@ -1396,7 +1549,7 @@ impl BpfProgram {
 
 #[derive(Clone)]
 pub struct Lvalue {
-	inner: Arc<InnerLvalue>
+	inner: Arc<InnerLvalue>,
 }
 
 impl Lvalue {
@@ -1406,7 +1559,9 @@ impl Lvalue {
 			member: member.into(),
 			is_ref: false,
 		});
-		Self { inner: inner.into() }
+		Self {
+			inner: inner.into(),
+		}
 	}
 
 	pub fn ref_member(self, member: &str) -> Self {
@@ -1415,12 +1570,19 @@ impl Lvalue {
 			member: member.into(),
 			is_ref: true,
 		});
-		Self { inner: inner.into() }
+		Self {
+			inner: inner.into(),
+		}
 	}
 
 	pub fn offset(self, idx: Expr) -> Self {
-		let inner = InnerLvalue::Offset(LvalueOffset { parent: Box::new(self), idx });
-		Self { inner: inner.into() }
+		let inner = InnerLvalue::Offset(LvalueOffset {
+			parent: Box::new(self),
+			idx,
+		});
+		Self {
+			inner: inner.into(),
+		}
 	}
 
 	pub fn gen_expression(&self) -> String {
@@ -1451,9 +1613,10 @@ impl Lvalue {
 
 	pub fn variable(x: &Variable) -> Self {
 		let inner = InnerLvalue::Variable(x.clone());
-		Self { inner: inner.into() }
+		Self {
+			inner: inner.into(),
+		}
 	}
-
 }
 
 pub enum InnerLvalue {
@@ -1517,7 +1680,11 @@ pub struct LvalueOffset {
 
 impl LvalueOffset {
 	pub fn gen_expression(&self) -> String {
-		format!("{}[{}]", self.parent.gen_expression(), self.idx.gen_expression())
+		format!(
+			"{}[{}]",
+			self.parent.gen_expression(),
+			self.idx.gen_expression()
+		)
 	}
 }
 
@@ -1566,25 +1733,29 @@ impl LvalueAssignment {
 
 	pub fn gen_code_unit(&self) -> String {
 		if self.deref {
-			format!("*{} {} {};\n",
-					self.lvalue.gen_expression(),
-					self.op.gen_symbol(),
-					self.expr.gen_expression())
+			format!(
+				"*{} {} {};\n",
+				self.lvalue.gen_expression(),
+				self.op.gen_symbol(),
+				self.expr.gen_expression()
+			)
 		} else {
-			format!("{} {} {};\n",
-					self.lvalue.gen_expression(),
-					self.op.gen_symbol(),
-					self.expr.gen_expression())
+			format!(
+				"{} {} {};\n",
+				self.lvalue.gen_expression(),
+				self.op.gen_symbol(),
+				self.expr.gen_expression()
+			)
 		}
 	}
 }
 
 pub struct CodeGen {
-	units: Vec<CodeUnit>
+	units: Vec<CodeUnit>,
 }
 
 impl CodeGen {
-	pub fn generate_code(&self) -> String {
+	pub fn emit_code(&self) -> String {
 		let mut s = String::new();
 		for unit in &self.units {
 			s.push_str(&unit.gen_code_unit());
@@ -1668,7 +1839,6 @@ mod test {
 
 		}"#;
 
-
 		let mut code_block = CodeGen::new();
 		code_block.push(Include::FilePath("vmlinux.h".into()).into());
 		code_block.push(Include::Library("bpf/bpf_core_read.h".into()).into());
@@ -1678,8 +1848,7 @@ mod test {
 		 * My Pid variable declaration and definition
 		 */
 		let qualifiers = &[Qualifier::Const, Qualifier::Volatile];
-		let my_pid =
-			Variable::new(&Kind::uint32_t(), Some(qualifiers));
+		let my_pid = Variable::new(&Kind::uint32_t(), Some(qualifiers));
 		let def = my_pid.definition();
 
 		let value = Expr::uint(12345);
@@ -1710,28 +1879,24 @@ mod test {
 		/*
 		 * Struct 0: BPF ctx
 		 */
-		let sys_enter_ctx: Kind = Kind::cstruct(
-				&[
-				("pad".into(), Kind::uint64_t()),
-				("syscall_number".into(), Kind::int64_t()),
-				("args".into(), sysenter_args_t.clone()),
-				],
-		);
+		let sys_enter_ctx: Kind = Kind::cstruct(&[
+			("pad".into(), Kind::uint64_t()),
+			("syscall_number".into(), Kind::int64_t()),
+			("args".into(), sysenter_args_t.clone()),
+		]);
 		let def = sys_enter_ctx.definition();
 		code_block.push(def.into());
 
 		/*
 		 * Struct 1: Syscall Event
 		 */
-		let syscall_event_t: Kind = Kind::cstruct(
-				&[
-				("pid".into(), Kind::uint32_t()),
-				("tid".into(), Kind::uint32_t()),
-				("syscall_number".into(), Kind::uint64_t()),
-				("start_time".into(), Kind::uint64_t()),
-				("duration".into(), Kind::uint64_t()),
-				],
-		);
+		let syscall_event_t: Kind = Kind::cstruct(&[
+			("pid".into(), Kind::uint32_t()),
+			("tid".into(), Kind::uint32_t()),
+			("syscall_number".into(), Kind::uint64_t()),
+			("start_time".into(), Kind::uint64_t()),
+			("duration".into(), Kind::uint64_t()),
+		]);
 		let def = syscall_event_t.definition();
 		code_block.push(def.into());
 
@@ -1745,24 +1910,21 @@ mod test {
 		/*
 		 * Struct 2: A buffer of such syscall events
 		 */
-		let event_buffer_t = Kind::cstruct(
-			&[
-				("length".into(), Kind::uint32_t()),
-				("buffer".into(), buffer_array_t.clone()),
-			],
-		);
+		let event_buffer_t = Kind::cstruct(&[
+			("length".into(), Kind::uint32_t()),
+			("buffer".into(), buffer_array_t.clone()),
+		]);
 		let def = event_buffer_t.definition();
 		code_block.push(def.into());
 
 		/*
 		 * Perf Event Array to send event buffers to user space
 		 */
-		let event_buffer_map_t = Kind::bpf_map(BpfMap::PerfEventArray(
-				PerfEventArray::new(
-					Scalar::cconst("sizeof(int)"),
-					Scalar::cconst("sizeof(int)"),
-					)
-				));
+		let event_buffer_map_t =
+			Kind::bpf_map(BpfMap::PerfEventArray(PerfEventArray::new(
+				Scalar::cconst("sizeof(int)"),
+				Scalar::cconst("sizeof(int)"),
+			)));
 		let def = event_buffer_map_t.definition();
 		code_block.push(def.into());
 
@@ -1777,7 +1939,7 @@ mod test {
 		 * Kinddef the syscall buffer map
 		 */
 		let syscall_buffer_map_t = Kind::bpf_map(BpfMap::PerCpuArray(
-			PerCpuArray::new(&Kind::__u32(), &event_buffer_t, 1)
+			PerCpuArray::new(&Kind::__u32(), &event_buffer_t, 1),
 		));
 		let def = syscall_buffer_map_t.definition();
 		code_block.push(def.into());
@@ -1796,14 +1958,14 @@ mod test {
 		let bpf_probe_read = Function::with_name("bpf_probe_read");
 		let bpf_ktime_get_ns = Function::with_name("bpf_ktime_get_ns");
 		let bpf_map_lookup_elem = Function::with_name("bpf_map_lookup_elem");
-		let bpf_perf_event_output = Function::with_name("bpf_perf_event_output");
+		let bpf_perf_event_output =
+			Function::with_name("bpf_perf_event_output");
 
 		/*
 		 * Function declaration for BPF program
 		 */
 		let ret: Kind = Kind::int();
-		let args: Vec<Kind> =
-			vec![sys_enter_ctx.pointer()];
+		let args: Vec<Kind> = vec![sys_enter_ctx.pointer()];
 		let bpf_declaration = FunctionDeclaration::new(&ret, args);
 
 		/*
@@ -1870,8 +2032,7 @@ mod test {
 		 * Pointers to members of task struct
 		 */
 
-		let task_pid_ptr =
-			Variable::new(&Kind::uint32_t().pointer(), None);
+		let task_pid_ptr = Variable::new(&Kind::uint32_t().pointer(), None);
 		let def = task_pid_ptr.definition();
 		let expr = task.expr().ref_member("tgid").reference();
 
@@ -1884,14 +2045,10 @@ mod test {
 		 * bpf_probe_read Function call to get the pid
 		 */
 
-		let args = vec![
-			pid_ref_var.expr(),
-			sizeof_pid.expr(),
-			task_pid_ptr.expr()
-		];
+		let args =
+			vec![pid_ref_var.expr(), sizeof_pid.expr(), task_pid_ptr.expr()];
 		let call = bpf_probe_read.call(args);
 		bpf_scope_block.push(call.into());
-
 
 		/*
 		 * Initialize a variable to hold the tid
@@ -1941,11 +2098,8 @@ mod test {
 		 * bpf_probe_read function call to get the tid
 		 */
 
-		let args = vec![
-			tid_ref_var.expr(),
-			sizeof_tid.expr(),
-			task_tid_ptr.expr()
-		];
+		let args =
+			vec![tid_ref_var.expr(), sizeof_tid.expr(), task_tid_ptr.expr()];
 		let expr = bpf_probe_read.call(args);
 		bpf_scope_block.push(expr.into());
 
@@ -1994,18 +2148,12 @@ mod test {
 		let syscall_filter = Expr::binary(
 			syscall_number.expr(),
 			BinaryOperator::Eq,
-			Expr::uint(0)
+			Expr::uint(0),
 		);
-		let pid_filter = Expr::binary(
-			pid.expr(),
-			BinaryOperator::Eq,
-			target_pid.expr()
-		);
-		let filt = Expr::binary(
-			syscall_filter,
-			BinaryOperator::And,
-			pid_filter,
-		);
+		let pid_filter =
+			Expr::binary(pid.expr(), BinaryOperator::Eq, target_pid.expr());
+		let filt =
+			Expr::binary(syscall_filter, BinaryOperator::And, pid_filter);
 
 		/*
 		 * ScopeBlock for if
@@ -2024,25 +2172,45 @@ mod test {
 		/*
 		 * Assign values to syscall_event struct
 		 * e.pid = pid;
-         * e.tid = tid;
-         * e.duration = 0 ;
-         * e.syscall_number = syscall_number;
-         * e.start_time = time;
+		 * e.tid = tid;
+		 * e.duration = 0 ;
+		 * e.syscall_number = syscall_number;
+		 * e.start_time = time;
 		 */
 		if_scope_block.push(
-			syscall_event.lvalue().member("pid").assign(&pid.expr()).into()
+			syscall_event
+				.lvalue()
+				.member("pid")
+				.assign(&pid.expr())
+				.into(),
 		);
 		if_scope_block.push(
-			syscall_event.lvalue().member("tid").assign(&tid.expr()).into()
+			syscall_event
+				.lvalue()
+				.member("tid")
+				.assign(&tid.expr())
+				.into(),
 		);
 		if_scope_block.push(
-			syscall_event.lvalue().member("duration").assign(&Expr::uint(0)).into()
+			syscall_event
+				.lvalue()
+				.member("duration")
+				.assign(&Expr::uint(0))
+				.into(),
 		);
 		if_scope_block.push(
-			syscall_event.lvalue().member("syscall_number").assign(&syscall_number.expr()).into()
+			syscall_event
+				.lvalue()
+				.member("syscall_number")
+				.assign(&syscall_number.expr())
+				.into(),
 		);
 		if_scope_block.push(
-			syscall_event.lvalue().member("start_time").assign(&syscall_number.expr()).into()
+			syscall_event
+				.lvalue()
+				.member("start_time")
+				.assign(&syscall_number.expr())
+				.into(),
 		);
 
 		/*
@@ -2054,12 +2222,10 @@ mod test {
 		 */
 		let buffer_ptr = Variable::new(&event_buffer_t.pointer(), None);
 		let def = buffer_ptr.definition();
-		let expr = bpf_map_lookup_elem.call(
-			vec![
-				syscall_buffer_map.expr().reference(),
-				zero.expr().reference()
-			]
-		);
+		let expr = bpf_map_lookup_elem.call(vec![
+			syscall_buffer_map.expr().reference(),
+			zero.expr().reference(),
+		]);
 		let assign = buffer_ptr.lvalue().assign(&expr);
 		if_scope_block.push(def.into());
 		if_scope_block.push(assign.into());
@@ -2075,9 +2241,9 @@ mod test {
 		/*
 		 * Check if the buffer length is < 256
 		 * if (buffer->length < 256) {
-         *     buffer->buffer[buffer->length] = e;
-         *     buffer->length += 1;
-         * }
+		 *     buffer->buffer[buffer->length] = e;
+		 *     buffer->length += 1;
+		 * }
 		 */
 		let buffer_len_check = Expr::binary(
 			buffer_ptr.expr().ref_member("length"),
@@ -2097,8 +2263,8 @@ mod test {
 			.add_assign(Expr::uint(1));
 		block.push(assign.into());
 
-		if_scope_block.push(IfBlock::from_parts(buffer_len_check, block).into());
-
+		if_scope_block
+			.push(IfBlock::from_parts(buffer_len_check, block).into());
 
 		/*
 		 * Send the buffer to userspace using the event buffer
@@ -2118,32 +2284,30 @@ mod test {
 		let buffer_full_check = Expr::binary(
 			buffer_ptr.expr().ref_member("length"),
 			BinaryOperator::Eq,
-			Expr::uint(256)
+			Expr::uint(256),
 		);
 		let mut block = ScopeBlock::new();
-		let expr = bpf_perf_event_output.call(
-			vec![
-					bpf_declaration
-						.get_arg(0)
-						.unwrap()
-						.expr()
-						.cast(Kind::void().pointer()),
-					event_buffer_map.expr().reference(),
-					Expr::cconst("BPF_F_CURRENT_CPU"),
-					buffer_ptr.expr(),
-					sizeof.call(vec![buffer_ptr.expr().deref()]),
-			]
-		);
+		let expr = bpf_perf_event_output.call(vec![
+			bpf_declaration
+				.get_arg(0)
+				.unwrap()
+				.expr()
+				.cast(Kind::void().pointer()),
+			event_buffer_map.expr().reference(),
+			Expr::cconst("BPF_F_CURRENT_CPU"),
+			buffer_ptr.expr(),
+			sizeof.call(vec![buffer_ptr.expr().deref()]),
+		]);
 		block.push(expr.into());
 
-		if_scope_block.push(IfBlock::from_parts(buffer_full_check, block).into());
+		if_scope_block
+			.push(IfBlock::from_parts(buffer_full_check, block).into());
 
 		/*
 		 * Finally, we push the if scope block to the bpf scope block
 		 */
 		bpf_scope_block.push(IfBlock::from_parts(filt, if_scope_block).into());
 		bpf_scope_block.push(CodeUnit::Return(Expr::uint(0).into()).into());
-
 
 		//if (syscall_number == 17 && pid == target_pid) {
 
@@ -2154,25 +2318,27 @@ mod test {
 			"handle_sys_enter",
 			bpf_declaration,
 			bpf_scope_block,
-			"tp/raw_syscalls/sys_enter"
+			"tp/raw_syscalls/sys_enter",
 		);
 		code_block.push(handle_sys_enter.definition().into());
 
-
-		println!("{}", clang_format(&code_block.generate_code()).unwrap());
-		assert_code_eq(exp, &code_block.generate_code());
+		println!("{}", clang_format(&code_block.emit_code()).unwrap());
+		assert_code_eq(exp, &code_block.emit_code());
 	}
 
 	#[test]
 	fn simple_alignment() {
-		let s = Struct::new(vec![
-			("a".into(), Kind::char()),  // align 1, offset 0
-			("b".into(), Kind::int()),   // align 4, offset 4
-			("c".into(), Kind::char()),  // align 1, offset 8
-			("d".into(), Kind::char()),  // align 1, offset 9
-			("e".into(), Kind::__u64()), // align 8, offset 16
-			("f".into(), Kind::char()),  // align 1, offset 24
-		].as_slice());
+		let s = Struct::new(
+			vec![
+				("a".into(), Kind::char()),  // align 1, offset 0
+				("b".into(), Kind::int()),   // align 4, offset 4
+				("c".into(), Kind::char()),  // align 1, offset 8
+				("d".into(), Kind::char()),  // align 1, offset 9
+				("e".into(), Kind::__u64()), // align 8, offset 16
+				("f".into(), Kind::char()),  // align 1, offset 24
+			]
+			.as_slice(),
+		);
 
 		// struct alignment is 8, size = 32
 
@@ -2184,26 +2350,31 @@ mod test {
 		assert_eq!(24, s.offsetof(&"f".into()).unwrap());
 		assert_eq!(8, s.alignment());
 		assert_eq!(32, s.size());
-
 	}
 
 	#[test]
 	fn array_alignment() {
-		let struct_kind = Kind::cstruct(&vec![
-			("a".into(), Kind::char()),  // align 1, offset 0
-			("b".into(), Kind::int()),   // align 4, offset 4
-			("c".into(), Kind::char()),  // align 1, offset 8
-			("d".into(), Kind::char()),  // align 1, offset 9
-			("e".into(), Kind::__u64()), // align 8, offset 16
-			("f".into(), Kind::char()),  // align 1, offset 24
-		].as_slice());
+		let struct_kind = Kind::cstruct(
+			&vec![
+				("a".into(), Kind::char()),  // align 1, offset 0
+				("b".into(), Kind::int()),   // align 4, offset 4
+				("c".into(), Kind::char()),  // align 1, offset 8
+				("d".into(), Kind::char()),  // align 1, offset 9
+				("e".into(), Kind::__u64()), // align 8, offset 16
+				("f".into(), Kind::char()),  // align 1, offset 24
+			]
+			.as_slice(),
+		);
 		let a_t = Kind::array(&struct_kind, 6);
 
-		let s = Struct::new(vec![
-			("a".into(), Kind::int()),   // align 1, offset 0,
-			("b".into(), a_t.clone()),   // align 8, offset 8, size 32 * 6
-			("c".into(), Kind::char()),  // align 1, offset 200
-		].as_slice());
+		let s = Struct::new(
+			vec![
+				("a".into(), Kind::int()),  // align 1, offset 0,
+				("b".into(), a_t.clone()),  // align 8, offset 8, size 32 * 6
+				("c".into(), Kind::char()), // align 1, offset 200
+			]
+			.as_slice(),
+		);
 
 		assert_eq!(0, s.offsetof(&"a".into()).unwrap());
 		assert_eq!(8, s.offsetof(&"b".into()).unwrap());

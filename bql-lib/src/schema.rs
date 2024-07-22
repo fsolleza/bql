@@ -1,24 +1,40 @@
-pub SchemaKind {
-	U64(Option<u64>),
-	I64(Option<i64>),
-	U32(Option<u32>),
-	I32(Option<u32>),
-	Array(Option<SchemaArray>),
-	String(Option<usize>),
+use std::{ops::Deref, sync::Arc};
+
+#[derive(Clone)]
+pub enum SchemaKind {
+	u64,
+	i64,
 }
 
-impl SchemaKind {
-	pub const fn size(&self) -> usize {
-		Self::u64(_) => 8,
-		Self::i64(_) => 8,
-		Self::u32(_) => 4,
-		Self::i32(_) => 4,
-		Self::Array(_) => 4,
+#[derive(Clone)]
+pub struct Schema {
+	inner: Arc<Vec<(String, SchemaKind)>>,
+}
+
+pub struct SchemaBuilder {
+	inner: Vec<(String, SchemaKind)>
+}
+
+impl SchemaBuilder {
+	pub fn new() -> Self {
+		Self {
+			inner: Vec::new(),
+		}
+	}
+
+	pub fn add_field(&mut self, s: &str, k: SchemaKind) -> &mut Self {
+		self.inner.push((s.into(), k));
+		self
+	}
+
+	pub fn build(&self) -> Schema {
+		Schema { inner: self.inner.clone().into() }
 	}
 }
 
-pub SchemaArray {
-	kind: Box<SchemaKind>,
-	len: usize,
+impl std::ops::Deref for Schema {
+	type Target = [(String, SchemaKind)];
+	fn deref(&self) -> &Self::Target {
+		self.inner.as_slice()
+	}
 }
-

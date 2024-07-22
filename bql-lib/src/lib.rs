@@ -1,7 +1,5 @@
-//pub mod common;
-//pub mod logical;
-//pub mod physical;
+mod bpf;
 pub mod codegen;
-pub mod bpf;
-pub mod physical_plan;
-pub mod executor;
+pub mod kernel_plan;
+pub mod schema;
+pub mod user_plan;

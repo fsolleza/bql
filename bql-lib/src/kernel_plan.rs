@@ -1,36 +1,20 @@
+use crate::bpf::{BpfCode, BpfObject};
 use crate::codegen::{
-	Expr,
-	Kind,
+	BinaryOperator, BpfMap, BpfProgram, BpfProgramDefinition, CodeGen,
+	CodeUnit, Expr, Function, FunctionBuilder, FunctionDeclaration, IfBlock,
+	Include, Kind, Lvalue, PerCpuArray, Scalar, ScopeBlock, UnaryOperator,
 	Variable,
-	IfBlock,
-	BpfMap,
-	Include,
-	CodeGen,
-	CodeUnit,
-	Scalar,
-	Function,
-	FunctionBuilder,
-	BpfProgram,
-	BpfProgramDefinition,
-	ScopeBlock,
-	FunctionDeclaration,
-	BinaryOperator,
-	UnaryOperator,
-	Lvalue,
-	PerCpuArray,
 };
-use crate::executor::BpfCode;
+use crossbeam::channel::{unbounded, Receiver, Sender};
 
-use std::{
-	sync::Arc,
-	collections::HashMap
-};
+use std::{collections::HashMap, sync::Arc};
 
 pub struct KernelPlan {
 	ctx: KernelContext,
 	plan: Vec<KernelOperator>,
 	output: PlanOutput,
 	maps: Vec<KernelBpfMap>,
+	code: Option<BpfCode>,
 }
 
 impl KernelPlan {
@@ -38,15 +22,13 @@ impl KernelPlan {
 		self.output.var.clone()
 	}
 
-	pub fn from_parts(
-		ctx: KernelContext,
-		output: &Kind,
-	) -> Self {
+	pub fn from_parts(ctx: KernelContext, output: &Kind) -> Self {
 		KernelPlan {
 			ctx,
 			output: PlanOutput::new(output.clone()),
 			plan: Vec::new(),
-			maps: Vec::new()
+			maps: Vec::new(),
+			code: None,
 		}
 	}
 
@@ -58,67 +40,52 @@ impl KernelPlan {
 		self.maps.push(map.clone());
 	}
 
-	//fn add_filter_kernel_data_op(
-	//	&mut self,
-	//	kernel_data: KernelData,
-	//	op: BinaryOperator,
-	//	rhs: Expr,
-	//	kernel_ctx: &KernelContext,
-	//) {
-	//	let op = FilterKernelData::new(kernel_data, op, rhs, &self.ctx).into_op();
-	//	self.plan.push(op);
-	//}
+	pub fn emit_code(&mut self) -> &BpfCode {
+		if self.code.is_none() {
+			let mut code = CodeGen::new();
 
-	//fn add_append_kernel_data_op(
-	//	&mut self,
-	//	kernel_data: KernelData,
-	//	field: &str,
-	//) {
-	//	let dst = self.output.var.lvalue().member(field);
-	//	let op = AppendKernelData::new(&self.ctx, kernel_data, dst).into_op();
-	//	self.plan.push(op);
-	//}
+			code.push(Include::FilePath("vmlinux.h".into()).into());
+			code.push(Include::Library("bpf/bpf_core_read.h".into()).into());
+			code.push(Include::Library("bpf/bpf_helpers.h".into()).into());
 
-	pub fn generate_code(&self) -> BpfCode {
+			// Define context types
+			code.push(self.ctx.ctx_definition());
 
-		let mut code = CodeGen::new();
+			// Define output type
+			code.push(self.output.kind_definition());
 
-		code.push(Include::FilePath("vmlinux.h".into()).into());
-		code.push(Include::Library("bpf/bpf_core_read.h".into()).into());
-		code.push(Include::Library("bpf/bpf_helpers.h".into()).into());
+			// Define all map types and map variables
+			for map in self.maps.iter() {
+				code.push(map.kind_definition());
+				code.push(map.variable_definition());
+			}
 
-		// Define context types
-		code.push(self.ctx.ctx_definition());
+			// Build program
+			let mut function_builder = self.ctx.program_builder();
 
-		// Define output type
-		code.push(self.output.kind_definition());
-
-		// Define all map types and map variables
-		for map in self.maps.iter() {
-			code.push(map.kind_definition());
-			code.push(map.variable_definition());
-		}
-
-		// Build program
-		let mut function_builder = self.ctx.program_builder();
-
-		// We always define the output struct first
-		for unit in self.output.variable_definition() {
-			function_builder.append_code_unit(unit);
-		}
-
-		// Then execute every op sequentially
-		for op in self.plan.iter() {
-			for unit in op.execute_op() {
+			// We always define the output struct first
+			for unit in self.output.variable_definition() {
 				function_builder.append_code_unit(unit);
 			}
-		}
 
-		let handle_sys_enter = function_builder.build();
-		
-		code.push(handle_sys_enter.definition().into());
-		code.push(CodeUnit::BpfLicense);
-		BpfCode::new(&code.generate_code())
+			// Then execute every op sequentially
+			for op in self.plan.iter() {
+				for unit in op.emit_code() {
+					function_builder.append_code_unit(unit);
+				}
+			}
+
+			let handle_sys_enter = function_builder.build();
+
+			code.push(handle_sys_enter.definition().into());
+			code.push(CodeUnit::BpfLicense);
+			self.code = Some(BpfCode::new(&code.emit_code()));
+		}
+		self.code.as_ref().unwrap()
+	}
+
+	pub fn compile_and_load(&mut self) -> BpfObject {
+		self.emit_code().compile_and_load()
 	}
 }
 
@@ -145,7 +112,7 @@ impl PlanOutput {
 }
 
 pub enum BpfContext {
-	SyscallEnter
+	SyscallEnter,
 }
 
 impl BpfContext {
@@ -168,13 +135,11 @@ pub struct KernelContextBuilder {
 impl KernelContextBuilder {
 	pub fn new_syscall_enter_ctx() -> Self {
 		let sysenter_args_t: Kind = Kind::array(&Kind::uint32_t(), 6);
-		let ctx_t: Kind = Kind::cstruct(
-				&[
-				("pad".into(), Kind::uint64_t()),
-				("syscall_number".into(), Kind::int64_t()),
-				("args".into(), sysenter_args_t.clone()),
-				],
-		);
+		let ctx_t: Kind = Kind::cstruct(&[
+			("pad".into(), Kind::uint64_t()),
+			("syscall_number".into(), Kind::int64_t()),
+			("args".into(), sysenter_args_t.clone()),
+		]);
 		let program_declaration =
 			FunctionDeclaration::new(&Kind::int(), vec![ctx_t.pointer()]);
 		let ctx_var = program_declaration.get_arg(0).unwrap();
@@ -188,7 +153,7 @@ impl KernelContextBuilder {
 			program_declaration,
 			kernel_variables,
 			hook,
-			name
+			name,
 		}
 	}
 
@@ -205,7 +170,9 @@ impl KernelContextBuilder {
 			hook: self.hook,
 			name: self.name,
 		};
-		KernelContext { inner: inner.into() }
+		KernelContext {
+			inner: inner.into(),
+		}
 	}
 }
 
@@ -220,7 +187,10 @@ impl KernelContext {
 	}
 
 	fn program_builder(&self) -> BpfProgramBuilder {
-		let mut f = FunctionBuilder::new(&self.inner.name, &self.inner.program_declaration);
+		let mut f = FunctionBuilder::new(
+			&self.inner.name,
+			&self.inner.program_declaration,
+		);
 		for unit in self.inner.kernel_variables.initialize_variables() {
 			f.append_code_unit(unit);
 		}
@@ -268,7 +238,7 @@ impl BpfProgramBuilder {
 
 pub struct KernelVariables {
 	ctx_var: Variable,
-	sources: HashMap<KernelData, KernelDataSource>
+	sources: HashMap<KernelData, KernelDataSource>,
 }
 
 impl KernelVariables {
@@ -315,8 +285,12 @@ impl KernelDataSource {
 
 	fn make_assignment(&self) -> CodeUnit {
 		match &self.source {
-			KernelData::SysEnter(x) => x.make_assignment(&self.ctx_var, &self.variable),
-			KernelData::CurrentTask(x) => x.make_assignment(&self.ctx_var, &self.variable),
+			KernelData::SysEnter(x) => {
+				x.make_assignment(&self.ctx_var, &self.variable)
+			}
+			KernelData::CurrentTask(x) => {
+				x.make_assignment(&self.ctx_var, &self.variable)
+			}
 		}
 	}
 }
@@ -338,22 +312,23 @@ impl KernelData {
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum SysEnterField {
-	SyscallNumber
+	SyscallNumber,
 }
 
 impl SysEnterField {
 	fn make_variable(&self) -> Variable {
 		match self {
-			Self::SyscallNumber => Variable::new(&Kind::int(), None)
+			Self::SyscallNumber => Variable::new(&Kind::int(), None),
 		}
 	}
 
 	fn make_assignment(&self, ctx: &Variable, dst: &Variable) -> CodeUnit {
 		match self {
-			Self::SyscallNumber => {
-				dst.lvalue().assign(&ctx.expr().ref_member("syscall_number"))
-			},
-		}.into()
+			Self::SyscallNumber => dst
+				.lvalue()
+				.assign(&ctx.expr().ref_member("syscall_number")),
+		}
+		.into()
 	}
 
 	pub fn schema(&self) -> KernelData {
@@ -363,13 +338,13 @@ impl SysEnterField {
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum CurrentTaskField {
-	Pid
+	Pid,
 }
 
 impl CurrentTaskField {
 	fn make_variable(&self) -> Variable {
 		match self {
-			Self::Pid => Variable::new(&Kind::int(), None)
+			Self::Pid => Variable::new(&Kind::int(), None),
 		}
 	}
 
@@ -385,11 +360,12 @@ impl CurrentTaskField {
 					func.call(Vec::new())
 						.cast(Kind::other("struct task_struct *".into()))
 						.ref_member("pid")
-						.reference()
+						.reference(),
 				];
 				read.call(args)
 			}
-		}.into()
+		}
+		.into()
 	}
 
 	pub fn schema(&self) -> KernelData {
@@ -404,11 +380,11 @@ pub enum KernelOperator {
 }
 
 impl KernelOperator {
-	pub fn execute_op(&self) -> Vec<CodeUnit> {
+	pub fn emit_code(&self) -> Vec<CodeUnit> {
 		match self {
-			Self::FilterKernelData(x) => x.execute_op(),
-			Self::AppendKernelData(x) => x.execute_op(),
-			Self::PerfMapBufferAndOutput(x) => x.execute_op(),
+			Self::FilterKernelData(x) => x.emit_code(),
+			Self::AppendKernelData(x) => x.emit_code(),
+			Self::PerfMapBufferAndOutput(x) => x.emit_code(),
 		}
 	}
 }
@@ -427,14 +403,19 @@ impl FilterKernelData {
 		rhs: Expr,
 		kernel_ctx: &KernelContext,
 	) -> Self {
-		Self { kernel_data, op, rhs, kernel_ctx: kernel_ctx.clone(), }
+		Self {
+			kernel_data,
+			op,
+			rhs,
+			kernel_ctx: kernel_ctx.clone(),
+		}
 	}
 
 	pub fn into_op(self) -> KernelOperator {
 		KernelOperator::FilterKernelData(self)
 	}
 
-	fn execute_op(&self) -> Vec<CodeUnit> {
+	fn emit_code(&self) -> Vec<CodeUnit> {
 		let variable = self.kernel_ctx.get_kernel_variable(&self.kernel_data);
 		let filter = Expr::binary(variable.expr(), self.op, self.rhs.clone());
 		let mut filter_block = ScopeBlock::new();
@@ -453,12 +434,12 @@ impl AppendKernelData {
 	pub fn new(
 		kernel_ctx: &KernelContext,
 		kernel_data: KernelData,
-		dst: Lvalue
+		dst: Lvalue,
 	) -> Self {
 		Self {
 			kernel_data,
 			kernel_ctx: kernel_ctx.clone(),
-			dst
+			dst,
 		}
 	}
 
@@ -466,7 +447,7 @@ impl AppendKernelData {
 		KernelOperator::AppendKernelData(self)
 	}
 
-	fn execute_op(&self) -> Vec<CodeUnit> {
+	fn emit_code(&self) -> Vec<CodeUnit> {
 		let variable = self.kernel_ctx.get_kernel_variable(&self.kernel_data);
 		vec![self.dst.assign(&variable.expr()).into()]
 	}
@@ -484,7 +465,7 @@ impl PerfMapBufferAndOutput {
 		ctx: &KernelContext,
 		perf_map: &KernelBpfMap,
 		buffer_map: &KernelBpfMap,
-		var: &Variable
+		var: &Variable,
 	) -> Self {
 		Self {
 			perf_map: perf_map.clone(),
@@ -498,11 +479,12 @@ impl PerfMapBufferAndOutput {
 		KernelOperator::PerfMapBufferAndOutput(self)
 	}
 
-	fn execute_op(&self) -> Vec<CodeUnit> {
+	fn emit_code(&self) -> Vec<CodeUnit> {
 		let mut result: Vec<CodeUnit> = Vec::new();
 
-		let buffer_size = self.buffer_map.buffer_size().unwrap() as u64;
-		let bpf_perf_event_output = Function::with_name("bpf_perf_event_output");
+		let buffer_capacity = self.buffer_map.buffer_capacity().unwrap() as u64;
+		let bpf_perf_event_output =
+			Function::with_name("bpf_perf_event_output");
 		let bpf_map_lookup_elem = Function::with_name("bpf_map_lookup_elem");
 		let sizeof = Function::with_name("sizeof");
 
@@ -513,14 +495,13 @@ impl PerfMapBufferAndOutput {
 		/*
 		 * Lookup the buffer in the buffermap
 		 */
-		let buffer_ptr = Variable::new(&self.buffer_map.map_value_t.pointer(), None);
+		let buffer_ptr =
+			Variable::new(&self.buffer_map.map_value_t.pointer(), None);
 		result.push(buffer_ptr.definition().into());
-		let expr = bpf_map_lookup_elem.call(
-			vec![
-				self.buffer_map.map.expr().reference(),
-				zero.expr().reference()
-			]
-		);
+		let expr = bpf_map_lookup_elem.call(vec![
+			self.buffer_map.map.expr().reference(),
+			zero.expr().reference(),
+		]);
 		let assign = buffer_ptr.lvalue().assign(&expr);
 		result.push(assign.into());
 
@@ -535,20 +516,20 @@ impl PerfMapBufferAndOutput {
 		/*
 		 * Check if the buffer length is < length
 		 * if (buffer->length < length) {
-         *     buffer->buffer[buffer->length] = e;
-         *     buffer->length += 1;
-         * }
+		 *     buffer->buffer[buffer->length] = e;
+		 *     buffer->length += 1;
+		 * }
 		 */
 		let buffer_len_check = Expr::binary(
 			buffer_ptr.expr().ref_member("length"),
 			BinaryOperator::Lt,
-			Expr::uint(buffer_size),
+			Expr::uint(buffer_capacity),
 		);
 		let mut block = ScopeBlock::new();
 		let assign = buffer_ptr
 			.lvalue()
 			.ref_member("buffer")
-			.offset(Expr::uint(1))
+			.offset(buffer_ptr.expr().ref_member("length"))
 			.assign(&self.var.expr());
 		block.push(assign.into());
 		let assign = buffer_ptr
@@ -576,18 +557,16 @@ impl PerfMapBufferAndOutput {
 		let buffer_full_check = Expr::binary(
 			buffer_ptr.expr().ref_member("length"),
 			BinaryOperator::Eq,
-			Expr::uint(buffer_size)
+			Expr::uint(buffer_capacity),
 		);
 		let mut block = ScopeBlock::new();
-		let expr = bpf_perf_event_output.call(
-			vec![
-					self.ctx.ctx_variable().expr().cast(Kind::void().pointer()),
-					self.perf_map.map.expr().reference(),
-					Expr::cconst("BPF_F_CURRENT_CPU"),
-					buffer_ptr.expr(),
-					sizeof.call(vec![buffer_ptr.expr().deref()]),
-			]
-		);
+		let expr = bpf_perf_event_output.call(vec![
+			self.ctx.ctx_variable().expr().cast(Kind::void().pointer()),
+			self.perf_map.map.expr().reference(),
+			Expr::cconst("BPF_F_CURRENT_CPU"),
+			buffer_ptr.expr(),
+			sizeof.call(vec![buffer_ptr.expr().deref()]),
+		]);
 		block.push(expr.into());
 
 		let assign = buffer_ptr
@@ -595,7 +574,6 @@ impl PerfMapBufferAndOutput {
 			.ref_member("length")
 			.assign(&Expr::uint(0));
 		block.push(assign.into());
-
 
 		result.push(IfBlock::from_parts(buffer_full_check, block).into());
 
@@ -606,7 +584,7 @@ impl PerfMapBufferAndOutput {
 #[derive(Clone)]
 enum BpfMapType {
 	PerfEventArray,
-	PerCpuBuffer
+	PerCpuBuffer,
 }
 
 #[derive(Clone)]
@@ -616,10 +594,16 @@ pub struct KernelBpfMap {
 	map_t: Kind,
 	map: Variable,
 	map_type: BpfMapType,
-	buffer_size: Option<usize>,
+
+	buffer_capacity: Option<usize>,
+	buffer_kind: Option<Kind>,
 }
 
 impl KernelBpfMap {
+	pub fn name(&self) -> String {
+		self.map.name()
+	}
+
 	pub fn value_kind(&self) -> Kind {
 		self.map_value_t.clone()
 	}
@@ -636,12 +620,10 @@ impl KernelBpfMap {
 		self.map.clone()
 	}
 
-	pub fn perf_event_array(
-		output_t: &Kind,
-	) -> Self {
+	pub fn perf_event_array(output_t: &Kind) -> Self {
 		let map_t = Kind::bpf_map(BpfMap::perf_event_array(
-					Scalar::cconst("sizeof(int)"),
-					Scalar::cconst("sizeof(int)"),
+			Scalar::cconst("sizeof(int)"),
+			Scalar::cconst("sizeof(int)"),
 		));
 		let map_value_t = Kind::int();
 		let map_key_t = Kind::int();
@@ -653,8 +635,17 @@ impl KernelBpfMap {
 			map,
 			map_type: BpfMapType::PerfEventArray,
 
-			buffer_size: None,
+			buffer_capacity: None,
+			buffer_kind: None,
 		}
+	}
+
+	pub fn map_value_kind(&self) -> Kind {
+		self.map_value_t.clone()
+	}
+
+	pub fn buffered_kind(&self) -> Option<Kind> {
+		self.buffer_kind.clone()
 	}
 
 	pub fn per_cpu_buffer(sz: usize, buffered_kind: &Kind) -> Self {
@@ -662,17 +653,17 @@ impl KernelBpfMap {
 		let map_key_t = Kind::__u32();
 
 		// Store sz items in the buffer
-		let map_value_t = Kind::cstruct(
-			&[
-				("length".into(), Kind::uint32_t()),
-				("buffer".into(), Kind::array(buffered_kind, sz)),
-			],
-		);
+		let map_value_t = Kind::cstruct(&[
+			("length".into(), Kind::uint32_t()),
+			("buffer".into(), Kind::array(buffered_kind, sz)),
+		]);
 
 		// Define map type
-		let map_t = Kind::bpf_map(BpfMap::PerCpuArray(
-			PerCpuArray::new(&map_key_t, &map_value_t, 1)
-		));
+		let map_t = Kind::bpf_map(BpfMap::PerCpuArray(PerCpuArray::new(
+			&map_key_t,
+			&map_value_t,
+			1,
+		)));
 
 		// Define map variable
 		let map = Variable::new(&map_t, None);
@@ -684,17 +675,13 @@ impl KernelBpfMap {
 			map,
 			map_type: BpfMapType::PerCpuBuffer,
 
-			buffer_size: Some(sz),
+			buffer_capacity: Some(sz),
+			buffer_kind: Some(buffered_kind.clone()),
 		}
 	}
 
-	fn buffer_size(&self) -> Option<usize> {
-		match self.map_type {
-			BpfMapType::PerCpuBuffer => {
-				self.buffer_size
-			}
-			_ => None,
-		}
+	fn buffer_capacity(&self) -> Option<usize> {
+		self.buffer_capacity
 	}
 
 	fn kind_definition(&self) -> CodeUnit {
@@ -703,72 +690,5 @@ impl KernelBpfMap {
 
 	fn variable_definition(&self) -> CodeUnit {
 		self.map.definition().into()
-	}
-}
-
-#[cfg(test)]
-mod test {
-	use super::*;
-	use crate::executor;
-
-	#[test]
-	fn test() {
-
-		let plan_output_t = Kind::cstruct(
-				&[
-				("syscall_number".into(), Kind::uint64_t()),
-				("start_time".into(), Kind::uint64_t()),
-				],
-		);
-
-		let mut kernel_ctx_builder =
-			BpfContext::SyscallEnter.kernel_context_builder();
-
-		kernel_ctx_builder
-			.add_kernel_variable(SysEnterField::SyscallNumber.schema());
-		kernel_ctx_builder
-			.add_kernel_variable(CurrentTaskField::Pid.schema());
-
-		let kernel_ctx = kernel_ctx_builder.build();
-
-		let mut plan = KernelPlan::from_parts(kernel_ctx.clone(), &plan_output_t);
-
-		// Maps
-		let buffer = KernelBpfMap::per_cpu_buffer(256, &plan_output_t);
-		let perf_array = KernelBpfMap::perf_event_array(&buffer.map_value_t);
-
-		// Ops
-		let filter_op = FilterKernelData::new(
-			CurrentTaskField::Pid.schema(),
-			BinaryOperator::Neq,
-			Expr::uint(17),
-			&kernel_ctx
-		).into_op();
-
-		let append_syscall_number_op = AppendKernelData::new(
-			&kernel_ctx,
-			SysEnterField::SyscallNumber.schema(),
-			plan.output.var.lvalue().member("syscall_number"), // TODO: This seems to be hardcoded
-		).into_op();
-
-		let output_op = PerfMapBufferAndOutput::new(
-			&kernel_ctx,
-			&perf_array,
-			&buffer,
-			&plan.output.var
-		).into_op();
-
-		plan.add_map(&buffer);
-		plan.add_map(&perf_array);
-
-		plan.add_op(filter_op);
-		plan.add_op(append_syscall_number_op);
-		plan.add_op(output_op);
-
-		let code = plan.generate_code();
-		//println!("{}", code.generate_code());
-
-		let executor = executor::BpfExecutor::new(&code.generate_code());
-		let obj = executor.compile();
 	}
 }
