@@ -1,6 +1,6 @@
 use bql_lib::codegen::{BinaryOperator, Expr, Kind};
 use bql_lib::kernel_plan::{
-	AppendKernelData, BpfContext, CurrentTaskField, FilterKernelData,
+	AppendKernelData, BpfContext, CurrentTaskField, SelectKernelData,
 	KernelBpfMap, KernelPlan, PerfMapBufferAndOutput, SysEnterField, Timestamp,
 };
 use bql_lib::schema::{Schema, SchemaBuilder, SchemaKind};
@@ -38,13 +38,21 @@ fn q1() {
 	let perf_array = KernelBpfMap::perf_event_array(&buffer.value_kind());
 
 	// Ops
-	let filter_op = FilterKernelData::new(
+	let filter_op = SelectKernelData::new(
 		pid_schema,
 		BinaryOperator::Eq,
-		Expr::uint(0),
+		Expr::uint(2414061),
 		&kernel_ctx,
 	)
 	.into_op();
+
+	//let filter_op = FilterKernelData::new(
+	//	pid_schema,
+	//	BinaryOperator::Eq,
+	//	Expr::uint(pid),
+	//	&kernel_ctx,
+	//)
+	//.into_op();
 
 	let append_timestamp_op = AppendKernelData::new(
 		&kernel_ctx,
@@ -110,6 +118,21 @@ fn q1() {
 
 	let mut user_plan = UserPlan::new(obj, print_op);
 	user_plan.execute();
+}
+
+use clap::Parser;
+
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+	/// Target pid to capture data. Default = 0, captures all pids
+	#[arg(short, long, default_value_t = 0)]
+	pid: u64,
+
+	/// Target syscall number to monitor. Default = 0, captures all syscalls
+	#[arg(short, long, default_value_t = 0)]
+	syscall_number: u64,
 }
 
 fn main() {

@@ -386,7 +386,7 @@ impl CurrentTaskField {
 					sizeof.call(vec![dst.clone().expr()]),
 					func.call(Vec::new())
 						.cast(Kind::other("struct task_struct *".into()))
-						.ref_member("pid")
+						.ref_member("tgid")
 						.reference(),
 				];
 				read.call(args)
@@ -401,7 +401,7 @@ impl CurrentTaskField {
 }
 
 pub enum KernelOperator {
-	FilterKernelData(FilterKernelData),
+	SelectKernelData(SelectKernelData),
 	AppendKernelData(AppendKernelData),
 	PerfMapBufferAndOutput(PerfMapBufferAndOutput),
 }
@@ -409,21 +409,21 @@ pub enum KernelOperator {
 impl KernelOperator {
 	pub fn emit_code(&self) -> Vec<CodeUnit> {
 		match self {
-			Self::FilterKernelData(x) => x.emit_code(),
+			Self::SelectKernelData(x) => x.emit_code(),
 			Self::AppendKernelData(x) => x.emit_code(),
 			Self::PerfMapBufferAndOutput(x) => x.emit_code(),
 		}
 	}
 }
 
-pub struct FilterKernelData {
+pub struct SelectKernelData {
 	kernel_data: KernelSchema,
 	op: BinaryOperator,
 	rhs: Expr,
 	kernel_ctx: KernelContext,
 }
 
-impl FilterKernelData {
+impl SelectKernelData {
 	pub fn new(
 		kernel_data: KernelSchema,
 		op: BinaryOperator,
@@ -439,12 +439,15 @@ impl FilterKernelData {
 	}
 
 	pub fn into_op(self) -> KernelOperator {
-		KernelOperator::FilterKernelData(self)
+		KernelOperator::SelectKernelData(self)
 	}
 
 	fn emit_code(&self) -> Vec<CodeUnit> {
 		let variable = self.kernel_ctx.get_kernel_variable(&self.kernel_data);
-		let filter = Expr::binary(variable.expr(), self.op, self.rhs.clone());
+		let filter = Expr::unary(
+			Expr::binary(variable.expr(), self.op, self.rhs.clone()),
+			UnaryOperator::Not,
+		);
 		let mut filter_block = ScopeBlock::new();
 		filter_block.push(CodeUnit::Return(Expr::uint(0).into()).into());
 		vec![IfBlock::from_parts(filter, filter_block).into()]

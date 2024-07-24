@@ -46,7 +46,7 @@ pub fn eq_slice<T: Copy + Eq + PartialEq>(
 	}
 }
 
-use crate::user_plan::{Column, UserScalar, Batch};
+use crate::user_plan::{Batch, Column, UserScalar};
 
 enum IntSlice {
 	U64(Vec<u64>),
@@ -160,9 +160,7 @@ pub enum TransformOp {
 impl TransformOp {
 	fn execute(&self, batch: &Batch) -> IntSlice {
 		match self {
-			Self::Init(x) => {
-				batch.get_column(&x).unwrap().into()
-			},
+			Self::Init(x) => batch.get_column(&x).unwrap().into(),
 
 			Self::AddScalar(l, r) => {
 				let l = l.execute(batch);

@@ -103,7 +103,11 @@ impl BatchBuilder {
 		}
 		let include = vec![true; self.len];
 
-		Batch { columns, include, len: self.len }
+		Batch {
+			columns,
+			include,
+			len: self.len,
+		}
 	}
 }
 
@@ -169,7 +173,10 @@ pub struct Filter {
 
 impl Filter {
 	pub fn new(op: CompareOp, source: Operator) -> Self {
-		Self { op, source: Box::new(source) }
+		Self {
+			op,
+			source: Box::new(source),
+		}
 	}
 
 	pub fn to_op(self) -> Operator {
