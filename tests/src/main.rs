@@ -3,12 +3,12 @@ use bql_lib::kernel_plan::*;
 use bql_lib::user_plan::*;
 use bql_lib::schema::*;
 
-fn main() {
-
+fn q1() {
 	// Kernel space plan
 
 	let plan_output_t = Kind::cstruct(
 		&[
+		("timestamp".into(), Kind::uint64_t()),
 		("syscall_number".into(), Kind::uint64_t()),
 		("pid".into(), Kind::uint64_t()),
 		],
@@ -17,10 +17,13 @@ fn main() {
 	let mut kernel_ctx_builder =
 		BpfContext::SyscallEnter.kernel_context_builder();
 
-	kernel_ctx_builder
-		.add_kernel_variable(SysEnterField::SyscallNumber.schema());
-	kernel_ctx_builder
-		.add_kernel_variable(CurrentTaskField::Pid.schema());
+	let pid_schema = CurrentTaskField::Pid.as_kernel_schema();
+	let syscall_num_schema = SysEnterField::SyscallNumber.as_kernel_schema();
+	let timestamp_schema = Timestamp::new().as_kernel_schema();
+
+	kernel_ctx_builder.add_kernel_variable(syscall_num_schema);
+	kernel_ctx_builder.add_kernel_variable(timestamp_schema);
+	kernel_ctx_builder.add_kernel_variable(pid_schema);
 
 	let kernel_ctx = kernel_ctx_builder.build();
 
@@ -32,21 +35,27 @@ fn main() {
 
 	// Ops
 	let filter_op = FilterKernelData::new(
-		CurrentTaskField::Pid.schema(),
+		pid_schema,
 		BinaryOperator::Eq,
 		Expr::uint(0),
 		&kernel_ctx
 		).into_op();
 
+	let append_timestamp_op = AppendKernelData::new(
+		&kernel_ctx,
+		timestamp_schema,
+		plan.output_variable().lvalue().member("timestamp"), // TODO: This seems to be hardcoded
+		).into_op();
+
 	let append_syscall_number_op = AppendKernelData::new(
 		&kernel_ctx,
-		SysEnterField::SyscallNumber.schema(),
+		syscall_num_schema,
 		plan.output_variable().lvalue().member("syscall_number"), // TODO: This seems to be hardcoded
 		).into_op();
 
 	let append_pid = AppendKernelData::new(
 		&kernel_ctx,
-		CurrentTaskField::Pid.schema(),
+		pid_schema,
 		plan.output_variable().lvalue().member("pid"), // TODO: This seems to be hardcoded
 		).into_op();
 
@@ -61,6 +70,7 @@ fn main() {
 	plan.add_map(&perf_array);
 
 	plan.add_op(filter_op);
+	plan.add_op(append_timestamp_op);
 	plan.add_op(append_syscall_number_op);
 	plan.add_op(append_pid);
 	plan.add_op(output_op);
@@ -72,6 +82,7 @@ fn main() {
 	let buffer_t = buffer.value_kind();
 	let item_t = plan_output_t.clone();
 	let schema = SchemaBuilder::new()
+		.add_field("timestamp", SchemaKind::u64)
 		.add_field("syscall_number", SchemaKind::u64)
 		.add_field("pid", SchemaKind::u64)
 		.build();
@@ -82,4 +93,8 @@ fn main() {
 
 	let mut user_plan = UserPlan::new(obj, print_op);
 	user_plan.execute();
+}
+
+fn main() {
+	q1();
 }

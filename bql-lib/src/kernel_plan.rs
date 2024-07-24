@@ -157,7 +157,7 @@ impl KernelContextBuilder {
 		}
 	}
 
-	pub fn add_kernel_variable(&mut self, schema: KernelData) {
+	pub fn add_kernel_variable(&mut self, schema: KernelSchema) {
 		self.kernel_variables.add_kernel_variable(schema);
 	}
 
@@ -201,7 +201,7 @@ impl KernelContext {
 		}
 	}
 
-	fn get_kernel_variable(&self, kernel_data: &KernelData) -> Variable {
+	fn get_kernel_variable(&self, kernel_data: &KernelSchema) -> Variable {
 		self.inner.kernel_variables.get_variable(kernel_data)
 	}
 
@@ -238,7 +238,7 @@ impl BpfProgramBuilder {
 
 pub struct KernelVariables {
 	ctx_var: Variable,
-	sources: HashMap<KernelData, KernelDataSource>,
+	sources: HashMap<KernelSchema, KernelDataSource>,
 }
 
 impl KernelVariables {
@@ -249,12 +249,12 @@ impl KernelVariables {
 		}
 	}
 
-	pub fn add_kernel_variable(&mut self, schema: KernelData) {
+	pub fn add_kernel_variable(&mut self, schema: KernelSchema) {
 		let source = KernelDataSource::new(&self.ctx_var, schema);
 		self.sources.insert(schema, source);
 	}
 
-	pub fn get_variable(&self, source: &KernelData) -> Variable {
+	pub fn get_variable(&self, source: &KernelSchema) -> Variable {
 		self.sources.get(source).unwrap().variable.clone()
 	}
 
@@ -271,11 +271,11 @@ impl KernelVariables {
 pub struct KernelDataSource {
 	ctx_var: Variable,
 	variable: Variable,
-	source: KernelData,
+	source: KernelSchema,
 }
 
 impl KernelDataSource {
-	fn new(ctx_var: &Variable, source: KernelData) -> Self {
+	fn new(ctx_var: &Variable, source: KernelSchema) -> Self {
 		Self {
 			ctx_var: ctx_var.clone(),
 			variable: source.make_variable(),
@@ -285,28 +285,53 @@ impl KernelDataSource {
 
 	fn make_assignment(&self) -> CodeUnit {
 		match &self.source {
-			KernelData::SysEnter(x) => {
+			KernelSchema::SysEnter(x) => {
 				x.make_assignment(&self.ctx_var, &self.variable)
 			}
-			KernelData::CurrentTask(x) => {
+			KernelSchema::CurrentTask(x) => {
 				x.make_assignment(&self.ctx_var, &self.variable)
 			}
+			KernelSchema::Timestamp(x) => x.make_assignment(&self.variable),
 		}
 	}
 }
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub enum KernelData {
+pub enum KernelSchema {
 	SysEnter(SysEnterField),
 	CurrentTask(CurrentTaskField),
+	Timestamp(Timestamp),
 }
 
-impl KernelData {
+impl KernelSchema {
 	fn make_variable(&self) -> Variable {
 		match self {
 			Self::SysEnter(x) => x.make_variable(),
 			Self::CurrentTask(x) => x.make_variable(),
+			Self::Timestamp(x) => x.make_variable(),
 		}
+	}
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct Timestamp {}
+
+impl Timestamp {
+	pub fn new() -> Self {
+		Timestamp {}
+	}
+
+	fn make_variable(&self) -> Variable {
+		Variable::new(&Kind::uint64_t(), None)
+	}
+
+	fn make_assignment(&self, dst: &Variable) -> CodeUnit {
+		let func = Function::with_name("bpf_ktime_get_ns");
+		dst.lvalue().assign(&func.call(vec![])).into()
+	}
+
+	pub fn as_kernel_schema(&self) -> KernelSchema {
+		KernelSchema::Timestamp(*self)
 	}
 }
 
@@ -331,8 +356,8 @@ impl SysEnterField {
 		.into()
 	}
 
-	pub fn schema(&self) -> KernelData {
-		KernelData::SysEnter(*self)
+	pub fn as_kernel_schema(&self) -> KernelSchema {
+		KernelSchema::SysEnter(*self)
 	}
 }
 
@@ -368,8 +393,8 @@ impl CurrentTaskField {
 		.into()
 	}
 
-	pub fn schema(&self) -> KernelData {
-		KernelData::CurrentTask(*self)
+	pub fn as_kernel_schema(&self) -> KernelSchema {
+		KernelSchema::CurrentTask(*self)
 	}
 }
 
@@ -390,7 +415,7 @@ impl KernelOperator {
 }
 
 pub struct FilterKernelData {
-	kernel_data: KernelData,
+	kernel_data: KernelSchema,
 	op: BinaryOperator,
 	rhs: Expr,
 	kernel_ctx: KernelContext,
@@ -398,7 +423,7 @@ pub struct FilterKernelData {
 
 impl FilterKernelData {
 	pub fn new(
-		kernel_data: KernelData,
+		kernel_data: KernelSchema,
 		op: BinaryOperator,
 		rhs: Expr,
 		kernel_ctx: &KernelContext,
@@ -425,7 +450,7 @@ impl FilterKernelData {
 }
 
 pub struct AppendKernelData {
-	kernel_data: KernelData,
+	kernel_data: KernelSchema,
 	kernel_ctx: KernelContext,
 	dst: Lvalue,
 }
@@ -433,7 +458,7 @@ pub struct AppendKernelData {
 impl AppendKernelData {
 	pub fn new(
 		kernel_ctx: &KernelContext,
-		kernel_data: KernelData,
+		kernel_data: KernelSchema,
 		dst: Lvalue,
 	) -> Self {
 		Self {

@@ -12,14 +12,12 @@ pub struct Schema {
 }
 
 pub struct SchemaBuilder {
-	inner: Vec<(String, SchemaKind)>
+	inner: Vec<(String, SchemaKind)>,
 }
 
 impl SchemaBuilder {
 	pub fn new() -> Self {
-		Self {
-			inner: Vec::new(),
-		}
+		Self { inner: Vec::new() }
 	}
 
 	pub fn add_field(&mut self, s: &str, k: SchemaKind) -> &mut Self {
@@ -28,7 +26,9 @@ impl SchemaBuilder {
 	}
 
 	pub fn build(&self) -> Schema {
-		Schema { inner: self.inner.clone().into() }
+		Schema {
+			inner: self.inner.clone().into(),
+		}
 	}
 }
 

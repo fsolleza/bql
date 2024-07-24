@@ -5,24 +5,46 @@ use crossbeam::channel::{bounded, Receiver, Sender};
 use libbpf_rs::{Map, PerfBufferBuilder};
 use std::collections::HashMap;
 use std::ops::Deref;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 #[derive(Debug)]
+pub enum Scalar {
+	U64(u64),
+	I64(i64),
+	Bool(bool),
+}
+
+#[derive(Debug)]
 pub enum Column {
+	U64(Arc<[u64]>),
+	I64(Arc<[i64]>),
+}
+
+impl Column {
+	pub fn len(&self) -> usize {
+		match self {
+			Self::U64(x) => x.len(),
+			Self::I64(x) => x.len(),
+		}
+	}
+}
+
+enum ColumnBuilder {
 	u64(Vec<u64>),
 	i64(Vec<i64>),
 }
 
-impl Column {
-	pub fn from_schema_kind(kind: &SchemaKind) -> Self {
+impl ColumnBuilder {
+	fn from_schema_kind(kind: &SchemaKind) -> Self {
 		match kind {
 			SchemaKind::u64 => Self::u64(Vec::new()),
 			SchemaKind::i64 => Self::i64(Vec::new()),
 		}
 	}
 
-	pub fn push_bytes(&mut self, bytes: &[u8]) {
+	fn push_bytes(&mut self, bytes: &[u8]) {
 		match self {
 			Self::u64(x) => {
 				x.push(u64::from_ne_bytes(bytes.try_into().unwrap()))
@@ -32,29 +54,61 @@ impl Column {
 			}
 		}
 	}
+
+	fn build(self) -> Column {
+		match self {
+			Self::u64(x) => Column::U64(x.into()),
+			Self::i64(x) => Column::I64(x.into()),
+		}
+	}
+
+	fn len(&self) -> usize {
+		match self {
+			Self::u64(x) => x.len(),
+			Self::i64(x) => x.len(),
+		}
+	}
+}
+
+struct BatchBuilder {
+	columns: HashMap<String, ColumnBuilder>,
+	len: usize,
+}
+
+impl BatchBuilder {
+	fn get_column_mut(&mut self, name: &str) -> Option<&mut ColumnBuilder> {
+		self.columns.get_mut(name)
+	}
+
+	fn from_schema(schema: &Schema) -> Self {
+		let mut batch = BatchBuilder {
+			columns: HashMap::new(),
+			len: 0,
+		};
+		for (name, kind) in schema.iter() {
+			batch
+				.columns
+				.insert(name.into(), ColumnBuilder::from_schema_kind(kind));
+		}
+		batch
+	}
+
+	fn build(self) -> Batch {
+		let mut columns = HashMap::new();
+		for (k, v) in self.columns {
+			assert_eq!(v.len(), self.len);
+			columns.insert(k, v.build());
+		}
+		let include = vec![true; self.len];
+
+		Batch { columns, include }
+	}
 }
 
 #[derive(Debug)]
 pub struct Batch {
 	columns: HashMap<String, Column>,
-}
-
-impl Batch {
-	fn from_schema(schema: &Schema) -> Self {
-		let mut batch = Batch {
-			columns: HashMap::new(),
-		};
-		for (name, kind) in schema.iter() {
-			batch
-				.columns
-				.insert(name.into(), Column::from_schema_kind(kind));
-		}
-		batch
-	}
-
-	fn get_column_mut(&mut self, name: &str) -> Option<&mut Column> {
-		self.columns.get_mut(name)
-	}
+	include: Vec<bool>,
 }
 
 pub struct UserPlan {
@@ -66,13 +120,13 @@ impl UserPlan {
 	pub fn execute(&mut self) {
 		self.object.attach_programs();
 		// Call next until no more batches
-		while let Some(batch) = self.root.next_batch() { }
+		while let Some(batch) = self.root.next_batch() {}
 	}
 
 	pub fn new(object: BpfObject, root: Operator) -> Self {
 		Self {
 			object,
-			root: Box::new(root)
+			root: Box::new(root),
 		}
 	}
 }
@@ -93,14 +147,20 @@ impl Operator {
 	}
 }
 
+pub struct ColumnMap {
+	source: Box<Operator>,
+	column: String,
+}
+
 pub struct PrintData {
 	source: Box<Operator>,
 }
 
 impl PrintData {
-
 	pub fn new(source: Operator) -> Self {
-		Self { source: Box::new(source) }
+		Self {
+			source: Box::new(source),
+		}
 	}
 
 	pub fn to_op(self) -> Operator {
@@ -201,18 +261,22 @@ fn read_batch(
 		}
 	}
 
-	let mut batch = Batch::from_schema(&schema);
+	let mut batch_builder = BatchBuilder::from_schema(&schema);
 	let mut offset = 0;
 	for i in 0..len {
 		let d = &data[offset..];
 		let item_fields = item_t.as_cstruct_ref().unwrap().read_fields(d);
 		for (field, bytes) in item_fields {
-			batch.get_column_mut(field).unwrap().push_bytes(bytes);
+			batch_builder
+				.get_column_mut(field)
+				.unwrap()
+				.push_bytes(bytes);
 			offset += bytes.len();
 		}
 	}
+	batch_builder.len = len as usize;
 
-	batch
+	batch_builder.build()
 }
 
 pub struct PerfEventItem {
