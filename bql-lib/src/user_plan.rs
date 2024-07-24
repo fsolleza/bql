@@ -152,7 +152,7 @@ pub enum Operator {
 	ReadFromPerfEventArray(ReadFromPerfEventArray),
 	Noop(Noop),
 	PrintData(PrintData),
-	Filter(Filter),
+	Select(Select),
 }
 
 impl Operator {
@@ -161,17 +161,17 @@ impl Operator {
 			Operator::ReadFromPerfEventArray(x) => x.next_batch(),
 			Operator::Noop(x) => x.next_batch(),
 			Operator::PrintData(x) => x.next_batch(),
-			Operator::Filter(x) => x.next_batch(),
+			Operator::Select(x) => x.next_batch(),
 		}
 	}
 }
 
-pub struct Filter {
+pub struct Select {
 	op: CompareOp,
 	source: Box<Operator>,
 }
 
-impl Filter {
+impl Select {
 	pub fn new(op: CompareOp, source: Operator) -> Self {
 		Self {
 			op,
@@ -180,7 +180,7 @@ impl Filter {
 	}
 
 	pub fn to_op(self) -> Operator {
-		Operator::Filter(self)
+		Operator::Select(self)
 	}
 
 	pub fn next_batch(&mut self) -> Option<Batch> {

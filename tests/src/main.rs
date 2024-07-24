@@ -1,15 +1,15 @@
 use bql_lib::codegen::{BinaryOperator, Expr, Kind};
 use bql_lib::kernel_plan::{
-	AppendKernelData, BpfContext, CurrentTaskField, SelectKernelData,
-	KernelBpfMap, KernelPlan, PerfMapBufferAndOutput, SysEnterField, Timestamp,
+	AppendKernelData, BpfContext, CurrentTaskField, KernelBpfMap, KernelPlan,
+	PerfMapBufferAndOutput, SelectKernelData, SysEnterField, Timestamp,
 };
 use bql_lib::schema::{Schema, SchemaBuilder, SchemaKind};
 use bql_lib::user_plan::{
-	Filter, PrintData, ReadFromPerfEventArray, UserPlan, UserScalar,
+	PrintData, ReadFromPerfEventArray, Select, UserPlan, UserScalar,
 };
 use bql_lib::user_plan_helpers::*;
 
-fn q1() {
+fn q1(pid: u64, syscall_num: u64) {
 	// Kernel space plan
 
 	let plan_output_t = Kind::cstruct(&[
@@ -38,21 +38,33 @@ fn q1() {
 	let perf_array = KernelBpfMap::perf_event_array(&buffer.value_kind());
 
 	// Ops
-	let filter_op = SelectKernelData::new(
-		pid_schema,
-		BinaryOperator::Eq,
-		Expr::uint(2414061),
-		&kernel_ctx,
-	)
-	.into_op();
+	let select_pid_op = if pid > 0 {
+		Some(
+			SelectKernelData::new(
+				pid_schema,
+				BinaryOperator::Eq,
+				Expr::uint(pid),
+				&kernel_ctx,
+			)
+			.into_op(),
+		)
+	} else {
+		None
+	};
 
-	//let filter_op = FilterKernelData::new(
-	//	pid_schema,
-	//	BinaryOperator::Eq,
-	//	Expr::uint(pid),
-	//	&kernel_ctx,
-	//)
-	//.into_op();
+	let select_syscall_op = if syscall_num > 0 {
+		Some(
+			SelectKernelData::new(
+				syscall_num_schema,
+				BinaryOperator::Eq,
+				Expr::uint(syscall_num),
+				&kernel_ctx,
+			)
+			.into_op(),
+		)
+	} else {
+		None
+	};
 
 	let append_timestamp_op = AppendKernelData::new(
 		&kernel_ctx,
@@ -89,7 +101,13 @@ fn q1() {
 	plan.add_map(&buffer);
 	plan.add_map(&perf_array);
 
-	plan.add_op(filter_op);
+	if let Some(op) = select_pid_op {
+		plan.add_op(op);
+	}
+	if let Some(op) = select_syscall_op {
+		plan.add_op(op);
+	}
+
 	plan.add_op(append_timestamp_op);
 	plan.add_op(append_syscall_number_op);
 	plan.add_op(append_pid);
@@ -111,12 +129,121 @@ fn q1() {
 	let read_op =
 		ReadFromPerfEventArray::new(map, &item_t, &buffer_t, &schema).to_op();
 
-	let transform = TransformOp::Init("syscall_number".into());
-	let compare = CompareOp::TransformEqScalar(transform, UserScalar::U64(1));
-	let filter_op = Filter::new(compare, read_op).to_op();
-	let print_op = PrintData::new(filter_op).to_op();
+	//let transform = TransformOp::Init("syscall_number".into());
+	//let compare = CompareOp::TransformEqScalar(transform, UserScalar::U64(1));
+	//let filter_op = Select::new(compare, read_op).to_op();
+	let print_op = PrintData::new(read_op).to_op();
 
 	let mut user_plan = UserPlan::new(obj, print_op);
+	user_plan.execute();
+}
+
+fn q1_slow(pid: u64, syscall_num: u64) {
+	// Kernel space plan
+
+	let plan_output_t = Kind::cstruct(&[
+		("timestamp".into(), Kind::uint64_t()),
+		("syscall_number".into(), Kind::uint64_t()),
+		("pid".into(), Kind::uint64_t()),
+	]);
+
+	let mut kernel_ctx_builder =
+		BpfContext::SyscallEnter.kernel_context_builder();
+
+	let pid_schema = CurrentTaskField::Pid.as_kernel_schema();
+	let syscall_num_schema = SysEnterField::SyscallNumber.as_kernel_schema();
+	let timestamp_schema = Timestamp::new().as_kernel_schema();
+
+	kernel_ctx_builder.add_kernel_variable(syscall_num_schema);
+	kernel_ctx_builder.add_kernel_variable(timestamp_schema);
+	kernel_ctx_builder.add_kernel_variable(pid_schema);
+
+	let kernel_ctx = kernel_ctx_builder.build();
+
+	let mut plan = KernelPlan::from_parts(kernel_ctx.clone(), &plan_output_t);
+
+	// Maps
+	let buffer = KernelBpfMap::per_cpu_buffer(256, &plan_output_t);
+	let perf_array = KernelBpfMap::perf_event_array(&buffer.value_kind());
+
+	// Ops
+	let append_timestamp_op = AppendKernelData::new(
+		&kernel_ctx,
+		timestamp_schema,
+		// TODO: We kind of hardcoded this access... need to clean up API
+		plan.output_variable().lvalue().member("timestamp"),
+	)
+	.into_op();
+
+	let append_syscall_number_op = AppendKernelData::new(
+		&kernel_ctx,
+		syscall_num_schema,
+		// TODO: We kind of hardcoded this access... need to clean up API
+		plan.output_variable().lvalue().member("syscall_number"),
+	)
+	.into_op();
+
+	let append_pid = AppendKernelData::new(
+		&kernel_ctx,
+		pid_schema,
+		// TODO: We kind of hardcoded this access... need to clean up API
+		plan.output_variable().lvalue().member("pid"),
+	)
+	.into_op();
+
+	let output_op = PerfMapBufferAndOutput::new(
+		&kernel_ctx,
+		&perf_array,
+		&buffer,
+		&plan.output_variable(),
+	)
+	.into_op();
+
+	plan.add_map(&buffer);
+	plan.add_map(&perf_array);
+
+	plan.add_op(append_timestamp_op);
+	plan.add_op(append_syscall_number_op);
+	plan.add_op(append_pid);
+	plan.add_op(output_op);
+
+	let mut obj = plan.compile_and_load();
+
+	// User space Plan
+	let map = obj.map_mut(perf_array.name()).unwrap();
+	let buffer_t = buffer.value_kind();
+	let item_t = plan_output_t.clone();
+	let schema = SchemaBuilder::new()
+		.add_field("timestamp", SchemaKind::u64)
+		.add_field("syscall_number", SchemaKind::u64)
+		.add_field("pid", SchemaKind::u64)
+		.build();
+
+	// Userspace Operators
+	let mut op =
+		ReadFromPerfEventArray::new(map, &item_t, &buffer_t, &schema).to_op();
+
+	if pid > 0 {
+		let transform = TransformOp::Init("pid".into());
+		let compare =
+			CompareOp::TransformEqScalar(transform, UserScalar::U64(pid));
+		let filter_op = Select::new(compare, op).to_op();
+		op = filter_op;
+	}
+
+	if syscall_num > 0 {
+		let transform = TransformOp::Init("syscall_number".into());
+		let compare = CompareOp::TransformEqScalar(
+			transform,
+			UserScalar::U64(syscall_num),
+		);
+		let filter_op = Select::new(compare, op).to_op();
+		op = filter_op;
+	}
+
+	let op = PrintData::new(op).to_op();
+
+	let mut user_plan = UserPlan::new(obj, op);
 	user_plan.execute();
 }
 
@@ -133,8 +260,17 @@ struct Args {
 	/// Target syscall number to monitor. Default = 0, captures all syscalls
 	#[arg(short, long, default_value_t = 0)]
 	syscall_number: u64,
+
+	/// Target syscall number to monitor. Default = 0, captures all syscalls
+	#[arg(short, long, default_value_t = false)]
+	slow: bool,
 }
 
 fn main() {
-	q1();
+	let args = Args::parse();
+	if args.slow {
+		q1_slow(args.pid, args.syscall_number);
+	} else {
+		q1(args.pid, args.syscall_number);
+	}
 }
