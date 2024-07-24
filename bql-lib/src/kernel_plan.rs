@@ -9,6 +9,8 @@ use crossbeam::channel::{unbounded, Receiver, Sender};
 
 use std::{collections::HashMap, sync::Arc};
 
+//pub type KernelScalar = Scalar;
+
 pub struct KernelPlan {
 	ctx: KernelContext,
 	plan: Vec<KernelOperator>,

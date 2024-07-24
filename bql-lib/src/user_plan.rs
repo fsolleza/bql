@@ -1,6 +1,7 @@
 use crate::bpf::BpfObject;
 use crate::codegen::Kind;
 use crate::schema::*;
+use crate::user_plan_helpers::*;
 use crossbeam::channel::{bounded, Receiver, Sender};
 use libbpf_rs::{Map, PerfBufferBuilder};
 use std::collections::HashMap;
@@ -13,10 +14,11 @@ use std::time::Duration;
 pub enum Scalar {
 	U64(u64),
 	I64(i64),
-	Bool(bool),
 }
 
-#[derive(Debug)]
+pub type UserScalar = Scalar;
+
+#[derive(Debug, Clone)]
 pub enum Column {
 	U64(Arc<[u64]>),
 	I64(Arc<[i64]>),
@@ -101,14 +103,25 @@ impl BatchBuilder {
 		}
 		let include = vec![true; self.len];
 
-		Batch { columns, include }
+		Batch { columns, include, len: self.len }
 	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Batch {
 	columns: HashMap<String, Column>,
 	include: Vec<bool>,
+	len: usize,
+}
+
+impl Batch {
+	pub fn get_column(&self, name: &str) -> Option<Column> {
+		Some((*self.columns.get(name)?).clone())
+	}
+
+	pub fn len(&self) -> usize {
+		self.len
+	}
 }
 
 pub struct UserPlan {
@@ -135,6 +148,7 @@ pub enum Operator {
 	ReadFromPerfEventArray(ReadFromPerfEventArray),
 	Noop(Noop),
 	PrintData(PrintData),
+	Filter(Filter),
 }
 
 impl Operator {
@@ -143,7 +157,33 @@ impl Operator {
 			Operator::ReadFromPerfEventArray(x) => x.next_batch(),
 			Operator::Noop(x) => x.next_batch(),
 			Operator::PrintData(x) => x.next_batch(),
+			Operator::Filter(x) => x.next_batch(),
 		}
+	}
+}
+
+pub struct Filter {
+	op: CompareOp,
+	source: Box<Operator>,
+}
+
+impl Filter {
+	pub fn new(op: CompareOp, source: Operator) -> Self {
+		Self { op, source: Box::new(source) }
+	}
+
+	pub fn to_op(self) -> Operator {
+		Operator::Filter(self)
+	}
+
+	pub fn next_batch(&mut self) -> Option<Batch> {
+		let mut batch = self.source.next_batch()?;
+		let filter_result = self.op.execute(&batch);
+		// merge filters
+		for i in 0..filter_result.len() {
+			batch.include[i] &= filter_result[i];
+		}
+		Some(batch)
 	}
 }
 

@@ -46,7 +46,7 @@ pub fn eq_slice<T: Copy + Eq + PartialEq>(
 	}
 }
 
-use crate::user_plan::{Column, Scalar};
+use crate::user_plan::{Column, UserScalar, Batch};
 
 enum IntSlice {
 	U64(Vec<u64>),
@@ -76,13 +76,13 @@ impl IntSlice {
 		}
 	}
 
-	fn add_scalar(mut self, scalar: &Scalar) -> Self {
+	fn add_scalar(mut self, scalar: &UserScalar) -> Self {
 		match (&mut self, scalar) {
-			(Self::U64(ref mut l), Scalar::U64(r)) => {
+			(Self::U64(ref mut l), UserScalar::U64(r)) => {
 				add_scalar(l, *r);
 				self
 			}
-			(Self::I64(ref mut l), Scalar::I64(r)) => {
+			(Self::I64(ref mut l), UserScalar::I64(r)) => {
 				add_scalar(l, *r);
 				self
 			}
@@ -106,13 +106,13 @@ impl IntSlice {
 		}
 	}
 
-	fn mul_scalar(mut self, scalar: &Scalar) -> Self {
+	fn mul_scalar(mut self, scalar: &UserScalar) -> Self {
 		match (&mut self, scalar) {
-			(Self::U64(ref mut l), Scalar::U64(r)) => {
+			(Self::U64(ref mut l), UserScalar::U64(r)) => {
 				mul_scalar(l, *r);
 				self
 			}
-			(Self::I64(ref mut l), Scalar::I64(r)) => {
+			(Self::I64(ref mut l), UserScalar::I64(r)) => {
 				mul_scalar(l, *r);
 				self
 			}
@@ -150,37 +150,39 @@ impl From<&mut Column> for IntSlice {
 }
 
 pub enum TransformOp {
-	AddScalar(Box<TransformOp>, Scalar),
+	AddScalar(Box<TransformOp>, UserScalar),
 	AddSlice(Box<TransformOp>, Box<TransformOp>),
-	MulScalar(Box<TransformOp>, Scalar),
+	MulScalar(Box<TransformOp>, UserScalar),
 	MulSlice(Box<TransformOp>, Box<TransformOp>),
-	Init(Column),
+	Init(String),
 }
 
 impl TransformOp {
-	fn execute(&self) -> IntSlice {
+	fn execute(&self, batch: &Batch) -> IntSlice {
 		match self {
-			Self::Init(x) => x.into(),
+			Self::Init(x) => {
+				batch.get_column(&x).unwrap().into()
+			},
 
 			Self::AddScalar(l, r) => {
-				let l = l.execute();
+				let l = l.execute(batch);
 				l.add_scalar(r)
 			}
 
 			Self::AddSlice(l, r) => {
-				let l = l.execute();
-				let r = r.execute();
+				let l = l.execute(batch);
+				let r = r.execute(batch);
 				l.add_slice(r)
 			}
 
 			Self::MulScalar(l, r) => {
-				let l = l.execute();
+				let l = l.execute(batch);
 				l.mul_scalar(r)
 			}
 
 			Self::MulSlice(l, r) => {
-				let l = l.execute();
-				let r = r.execute();
+				let l = l.execute(batch);
+				let r = r.execute(batch);
 				l.mul_slice(r)
 			}
 
@@ -198,10 +200,10 @@ fn column_eq_column(l: &Column, r: &Column, result: &mut [bool]) {
 	}
 }
 
-fn column_eq_scalar(l: &Column, r: &Scalar, result: &mut [bool]) {
+fn column_eq_scalar(l: &Column, r: &UserScalar, result: &mut [bool]) {
 	match (l, r) {
-		(Column::U64(l), Scalar::U64(r)) => eq_scalar(&l, *r, result),
-		(Column::I64(l), Scalar::I64(r)) => eq_scalar(&l, *r, result),
+		(Column::U64(l), UserScalar::U64(r)) => eq_scalar(&l, *r, result),
+		(Column::I64(l), UserScalar::I64(r)) => eq_scalar(&l, *r, result),
 		// Handled at the planning level
 		_ => unreachable!(),
 	}
@@ -216,10 +218,10 @@ fn column_eq_intslice(l: &Column, r: &IntSlice, result: &mut [bool]) {
 	}
 }
 
-fn intslice_eq_scalar(l: &IntSlice, r: &Scalar, result: &mut [bool]) {
+fn intslice_eq_scalar(l: &IntSlice, r: &UserScalar, result: &mut [bool]) {
 	match (l, r) {
-		(IntSlice::U64(l), Scalar::U64(r)) => eq_scalar(&l, *r, result),
-		(IntSlice::I64(l), Scalar::I64(r)) => eq_scalar(&l, *r, result),
+		(IntSlice::U64(l), UserScalar::U64(r)) => eq_scalar(&l, *r, result),
+		(IntSlice::I64(l), UserScalar::I64(r)) => eq_scalar(&l, *r, result),
 		// Handled at the planning level
 		_ => unreachable!(),
 	}
@@ -242,6 +244,10 @@ impl CompareResult {
 	pub fn len(&self) -> usize {
 		self.set.len()
 	}
+
+	pub fn into_vec(self) -> Vec<bool> {
+		self.set
+	}
 }
 
 impl Deref for CompareResult {
@@ -260,53 +266,52 @@ impl DerefMut for CompareResult {
 pub enum CompareOp {
 	ColumnEqColumn(Column, Column),
 	ColumnEqTransform(Column, TransformOp),
-	ColumnEqScalar(Column, Scalar),
-	TransformEqScalar(TransformOp, Scalar),
+	ColumnEqScalar(Column, UserScalar),
+	TransformEqScalar(TransformOp, UserScalar),
 	TransformEqTransform(TransformOp, TransformOp),
 	And(Box<CompareOp>, Box<CompareOp>),
 }
 
 impl CompareOp {
-	fn execute(&mut self) -> CompareResult {
-		let mut result: Vec<bool> = Vec::new();
+	pub fn execute(&mut self, batch: &Batch) -> CompareResult {
 		match self {
 			Self::ColumnEqColumn(l, r) => {
-				result.resize(l.len(), true);
+				let mut result: Vec<bool> = vec![true; batch.len()];
 				column_eq_column(l, r, &mut result);
 				CompareResult { set: result }
 			}
 
 			Self::ColumnEqScalar(l, r) => {
-				result.resize(l.len(), true);
+				let mut result: Vec<bool> = vec![true; batch.len()];
 				column_eq_scalar(l, r, &mut result);
 				CompareResult { set: result }
 			}
 
 			Self::ColumnEqTransform(l, r) => {
-				result.resize(l.len(), true);
-				let r = r.execute();
+				let mut result: Vec<bool> = vec![true; batch.len()];
+				let r = r.execute(batch);
 				column_eq_intslice(l, &r, &mut result);
 				CompareResult { set: result }
 			}
 
 			Self::TransformEqScalar(l, r) => {
-				let l = l.execute();
-				result.resize(l.len(), true);
+				let mut result: Vec<bool> = vec![true; batch.len()];
+				let l = l.execute(batch);
 				intslice_eq_scalar(&l, &r, &mut result);
 				CompareResult { set: result }
 			}
 
 			Self::TransformEqTransform(l, r) => {
-				let l = l.execute();
-				let r = r.execute();
-				result.resize(l.len(), true);
+				let mut result: Vec<bool> = vec![true; batch.len()];
+				let l = l.execute(batch);
+				let r = r.execute(batch);
 				intslice_eq_intslice(&l, &r, &mut result);
 				CompareResult { set: result }
 			}
 
 			Self::And(l, r) => {
-				let mut l = l.execute();
-				let r = r.execute();
+				let mut l = l.execute(batch);
+				let r = r.execute(batch);
 				for i in 0..l.len() {
 					l[i] &= r[i];
 				}
