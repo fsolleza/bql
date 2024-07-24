@@ -1,49 +1,52 @@
 use std::collections::HashSet;
 
-use std::ops::{
-	Add,
-	Mul,
-	Deref,
-	DerefMut,
-};
+use std::ops::{Add, Deref, DerefMut, Mul};
 
-pub fn add_scalar<T: Copy + Add<Output=T>>(data: &mut [T], val: T) {
+pub fn add_scalar<T: Copy + Add<Output = T>>(data: &mut [T], val: T) {
 	for i in 0..data.len() {
 		data[i] = data[i] + val;
 	}
 }
 
-pub fn add_slice<T: Copy + Add<Output=T>>(data: &mut [T], other: &[T]) {
+pub fn add_slice<T: Copy + Add<Output = T>>(data: &mut [T], other: &[T]) {
 	for i in 0..data.len() {
 		data[i] = data[i] + other[i];
 	}
 }
 
-pub fn mul_scalar<T: Copy + Mul<Output=T>>(data: &mut [T], val: T) {
+pub fn mul_scalar<T: Copy + Mul<Output = T>>(data: &mut [T], val: T) {
 	for i in 0..data.len() {
 		data[i] = data[i] * val;
 	}
 }
 
-pub fn mul_slice<T: Copy + Mul<Output=T>>(data: &mut [T], other: &[T]) {
+pub fn mul_slice<T: Copy + Mul<Output = T>>(data: &mut [T], other: &[T]) {
 	for i in 0..data.len() {
 		data[i] = data[i] * other[i];
 	}
 }
 
-pub fn eq_scalar<T: Copy + Eq + PartialEq>(data: &[T], val: T, results: &mut [bool]) {
+pub fn eq_scalar<T: Copy + Eq + PartialEq>(
+	data: &[T],
+	val: T,
+	results: &mut [bool],
+) {
 	for i in 0..data.len() {
 		results[i] &= data[i] == val;
 	}
 }
 
-pub fn eq_slice<T: Copy + Eq + PartialEq>(data: &[T], other: &[T], results: &mut [bool]) {
+pub fn eq_slice<T: Copy + Eq + PartialEq>(
+	data: &[T],
+	other: &[T],
+	results: &mut [bool],
+) {
 	for i in 0..data.len() {
 		results[i] &= data[i] == other[i];
 	}
 }
 
-use crate::user_plan::{Scalar, Column};
+use crate::user_plan::{Column, Scalar};
 
 enum IntSlice {
 	U64(Vec<u64>),
@@ -117,7 +120,6 @@ impl IntSlice {
 			_ => unreachable!(),
 		}
 	}
-
 }
 
 impl From<Column> for IntSlice {
@@ -182,12 +184,12 @@ impl TransformOp {
 				l.mul_slice(r)
 			}
 
-			_ => unimplemented!()
+			_ => unimplemented!(),
 		}
 	}
 }
 
-fn column_eq_column(l: &Column, r: &Column, result: &mut[bool]) {
+fn column_eq_column(l: &Column, r: &Column, result: &mut [bool]) {
 	match (l, r) {
 		(Column::U64(l), Column::U64(r)) => eq_slice(&l, &r, result),
 		(Column::I64(l), Column::I64(r)) => eq_slice(&l, &r, result),
@@ -196,7 +198,7 @@ fn column_eq_column(l: &Column, r: &Column, result: &mut[bool]) {
 	}
 }
 
-fn column_eq_scalar(l: &Column, r: &Scalar, result: &mut[bool]) {
+fn column_eq_scalar(l: &Column, r: &Scalar, result: &mut [bool]) {
 	match (l, r) {
 		(Column::U64(l), Scalar::U64(r)) => eq_scalar(&l, *r, result),
 		(Column::I64(l), Scalar::I64(r)) => eq_scalar(&l, *r, result),
@@ -232,7 +234,6 @@ fn intslice_eq_intslice(l: &IntSlice, r: &IntSlice, result: &mut [bool]) {
 	}
 }
 
-
 pub struct CompareResult {
 	set: Vec<bool>,
 }
@@ -256,21 +257,19 @@ impl DerefMut for CompareResult {
 	}
 }
 
-
 pub enum CompareOp {
 	ColumnEqColumn(Column, Column),
 	ColumnEqTransform(Column, TransformOp),
 	ColumnEqScalar(Column, Scalar),
 	TransformEqScalar(TransformOp, Scalar),
 	TransformEqTransform(TransformOp, TransformOp),
-	And(Box<CompareOp>, Box<CompareOp>)
+	And(Box<CompareOp>, Box<CompareOp>),
 }
 
 impl CompareOp {
 	fn execute(&mut self) -> CompareResult {
 		let mut result: Vec<bool> = Vec::new();
 		match self {
-
 			Self::ColumnEqColumn(l, r) => {
 				result.resize(l.len(), true);
 				column_eq_column(l, r, &mut result);
@@ -313,7 +312,6 @@ impl CompareOp {
 				}
 				l
 			}
-
 		}
 	}
 }
