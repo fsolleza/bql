@@ -48,7 +48,7 @@ struct Args {
 	pid: u32,
 
 	#[arg(short, long, default_value_t=0)]
-	syscall: u32,
+	syscall_number: u32,
 }
 
 fn main() {
@@ -60,13 +60,12 @@ fn main() {
 	let mut open_skel: OpenSyscallCountSkel = skel_builder.open().unwrap();
 
 	open_skel.rodata_mut().TARGET_PID = args.pid;
-	open_skel.rodata_mut().TARGET_SYSCALL_NUMBER = args.syscall;
+	open_skel.rodata_mut().TARGET_SYSCALL_NUMBER = args.syscall_number;
 
 	let mut skel = open_skel.load().unwrap();
 
 	let perf = PerfBufferBuilder::new(skel.maps_mut().perf_ring())
 		.sample_cb(move |_cpu: i32, bytes: &[u8]| {
-			println!("Got batch with length {}", bytes.len());
 			let ptr = bytes.as_ptr() as *const Buffer;
 			let event_buffer = unsafe { *ptr };
 			COUNT.fetch_add(event_buffer.length as usize, SeqCst);

@@ -49,11 +49,13 @@ static DROPPED: AtomicU64 = AtomicU64::new(0);
 static DONE: AtomicBool = AtomicBool::new(false);
 
 fn counter() {
+	let mut second = 0;
 	while !DONE.load(SeqCst) {
 		let count = COUNT.swap(0, SeqCst);
 		let dropped = DROPPED.swap(0, SeqCst);
-		println!("Count: {}, Dropped: {}", count, dropped);
+		println!("Second: {}, Count: {}, Dropped: {}", second, count, dropped);
 		thread::sleep(Duration::from_secs(1));
+		second += 1;
 	}
 	thread::sleep(Duration::from_secs(2));
 }

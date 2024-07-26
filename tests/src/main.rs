@@ -5,11 +5,35 @@ use bql_lib::kernel_plan::{
 };
 use bql_lib::schema::{Schema, SchemaBuilder, SchemaKind};
 use bql_lib::user_plan::{
-	PrintData, ReadFromPerfEventArray, Select, UserPlan, UserScalar,
+	PrintData, ReadFromPerfEventArray, Select, UserPlan, UserScalar, SinkData
 };
 use bql_lib::user_plan_helpers::*;
 
+use std::{
+	sync::atomic::{AtomicUsize, Ordering::SeqCst},
+	thread,
+	time::Duration,
+};
+
+static COUNT: AtomicUsize = AtomicUsize::new(0);
+static LOST: AtomicUsize = AtomicUsize::new(0);
+
+fn counter() {
+	loop {
+		let c = COUNT.swap(0, SeqCst);
+		let l = LOST.swap(0, SeqCst);
+		println!("Count: {} Lost: {}", c, l);
+		thread::sleep(Duration::from_secs(1));
+	}
+}
+
+fn lost_event_handler(_: i32, count: u64) {
+	LOST.fetch_add(count as usize, SeqCst);
+}
+
 fn q1(pid: u64, syscall_num: u64) {
+
+
 	// Kernel space plan
 
 	let plan_output_t = Kind::cstruct(&[
@@ -38,6 +62,15 @@ fn q1(pid: u64, syscall_num: u64) {
 	let perf_array = KernelBpfMap::perf_event_array(&buffer.value_kind());
 
 	// Ops
+	let this_pid = std::process::id();
+	let remove_this_pid_op = SelectKernelData::new(
+				pid_schema,
+				BinaryOperator::Neq,
+				Expr::uint(this_pid as u64),
+				&kernel_ctx,
+			)
+			.into_op();
+
 	let select_pid_op = if pid > 0 {
 		Some(
 			SelectKernelData::new(
@@ -101,6 +134,7 @@ fn q1(pid: u64, syscall_num: u64) {
 	plan.add_map(&buffer);
 	plan.add_map(&perf_array);
 
+	plan.add_op(remove_this_pid_op);
 	if let Some(op) = select_pid_op {
 		plan.add_op(op);
 	}
@@ -127,14 +161,18 @@ fn q1(pid: u64, syscall_num: u64) {
 
 	// Userspace Operators
 	let read_op =
-		ReadFromPerfEventArray::new(map, &item_t, &buffer_t, &schema).to_op();
+		ReadFromPerfEventArray::new(map, &item_t, &buffer_t, &schema, lost_event_handler).to_op();
 
-	//let transform = TransformOp::Init("syscall_number".into());
-	//let compare = CompareOp::TransformEqScalar(transform, UserScalar::U64(1));
-	//let filter_op = Select::new(compare, read_op).to_op();
-	let print_op = PrintData::new(read_op).to_op();
+	let sink_op = SinkData::new(read_op);
+	let rx = sink_op.receiver();
+	let sink_op = sink_op.to_op();
 
-	let mut user_plan = UserPlan::new(obj, print_op);
+	let mut user_plan = UserPlan::new(obj, sink_op);
+	thread::spawn(move || {
+		while let Ok(x) = rx.recv() {
+			COUNT.fetch_add(x.include_count(), SeqCst);
+		}
+	});
 	user_plan.execute();
 }
 
@@ -167,6 +205,15 @@ fn q1_slow(pid: u64, syscall_num: u64) {
 	let perf_array = KernelBpfMap::perf_event_array(&buffer.value_kind());
 
 	// Ops
+	let this_pid = std::process::id();
+	let remove_this_pid_op = SelectKernelData::new(
+				pid_schema,
+				BinaryOperator::Neq,
+				Expr::uint(this_pid as u64),
+				&kernel_ctx,
+			)
+			.into_op();
+
 	let append_timestamp_op = AppendKernelData::new(
 		&kernel_ctx,
 		timestamp_schema,
@@ -202,6 +249,7 @@ fn q1_slow(pid: u64, syscall_num: u64) {
 	plan.add_map(&buffer);
 	plan.add_map(&perf_array);
 
+	plan.add_op(remove_this_pid_op);
 	plan.add_op(append_timestamp_op);
 	plan.add_op(append_syscall_number_op);
 	plan.add_op(append_pid);
@@ -221,7 +269,7 @@ fn q1_slow(pid: u64, syscall_num: u64) {
 
 	// Userspace Operators
 	let mut op =
-		ReadFromPerfEventArray::new(map, &item_t, &buffer_t, &schema).to_op();
+		ReadFromPerfEventArray::new(map, &item_t, &buffer_t, &schema, lost_event_handler).to_op();
 
 	if pid > 0 {
 		let transform = TransformOp::Init("pid".into());
@@ -241,9 +289,17 @@ fn q1_slow(pid: u64, syscall_num: u64) {
 		op = filter_op;
 	}
 
-	let op = PrintData::new(op).to_op();
+	let sink_op = SinkData::new(op);
+	let rx = sink_op.receiver();
+	let op = sink_op.to_op();
 
 	let mut user_plan = UserPlan::new(obj, op);
+	thread::spawn(move || {
+		while let Ok(x) = rx.recv() {
+			COUNT.fetch_add(x.include_count(), SeqCst);
+		}
+	});
+
 	user_plan.execute();
 }
 
@@ -268,6 +324,7 @@ struct Args {
 
 fn main() {
 	let args = Args::parse();
+	thread::spawn(counter);
 	if args.slow {
 		q1_slow(args.pid, args.syscall_number);
 	} else {

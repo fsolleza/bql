@@ -2,7 +2,7 @@ use crate::bpf::BpfObject;
 use crate::codegen::Kind;
 use crate::schema::*;
 use crate::user_plan_helpers::*;
-use crossbeam::channel::{bounded, Receiver, Sender};
+use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
 use libbpf_rs::{Map, PerfBufferBuilder};
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -126,6 +126,16 @@ impl Batch {
 	pub fn len(&self) -> usize {
 		self.len
 	}
+
+	pub fn include_count(&self) -> usize {
+		let mut count = 0;
+		for i in self.include.iter() {
+			if *i {
+				count += 1;
+			}
+		}
+		count
+	}
 }
 
 pub struct UserPlan {
@@ -153,6 +163,7 @@ pub enum Operator {
 	Noop(Noop),
 	PrintData(PrintData),
 	Select(Select),
+	SinkData(SinkData),
 }
 
 impl Operator {
@@ -162,6 +173,7 @@ impl Operator {
 			Operator::Noop(x) => x.next_batch(),
 			Operator::PrintData(x) => x.next_batch(),
 			Operator::Select(x) => x.next_batch(),
+			Operator::SinkData(x) => x.next_batch(),
 		}
 	}
 }
@@ -197,6 +209,37 @@ impl Select {
 pub struct ColumnMap {
 	source: Box<Operator>,
 	column: String,
+}
+
+pub struct SinkData {
+	source: Box<Operator>,
+	sender: Sender<Batch>,
+	receiver: Receiver<Batch>,
+}
+
+impl SinkData {
+	pub fn new(source: Operator) -> Self {
+		let (tx, rx) = bounded(256);
+		Self {
+			source: Box::new(source),
+			sender: tx,
+			receiver: rx,
+		}
+	}
+
+	pub fn to_op(self) -> Operator {
+		Operator::SinkData(self)
+	}
+
+	pub fn receiver(&self) -> Receiver<Batch> {
+		self.receiver.clone()
+	}
+
+	pub fn next_batch(&mut self) -> Option<Batch> {
+		let batch = self.source.next_batch()?;
+		self.sender.try_send(batch.clone()).unwrap();
+		Some(batch)
+	}
 }
 
 pub struct PrintData {
@@ -255,31 +298,51 @@ impl ReadFromPerfEventArray {
 		item_t: &Kind,
 		buffer_t: &Kind,
 		schema: &Schema,
+		lost_event_handler: fn(i32, u64),
 	) -> Self {
-		let (tx, rx) = bounded(256);
+		//let (tx, rx) = bounded(256);
 
-		let item_t = item_t.clone();
-		let buffer_t = buffer_t.clone();
-		let schema = schema.clone();
+		let (tx, rx) = unbounded();
+		let (parser_tx, parser_rx): (Sender<Vec<u8>>, _) = unbounded();
 
-		let tx_clone = tx.clone();
-		let perf_buffer = PerfBufferBuilder::new(map)
-			.sample_cb(move |cpu: i32, bytes: &[u8]| {
-				let batch = read_batch(&buffer_t, &item_t, bytes, &schema);
-				tx_clone.send(batch).unwrap();
-			})
+		for i in 0..2 {
+			let parser_rx = parser_rx.clone();
+			let tx = tx.clone();
+			let item_t = item_t.clone();
+			let buffer_t = buffer_t.clone();
+			let schema = schema.clone();
+			let parser_tx = parser_tx.clone();
+
+			thread::spawn(move || {
+				while let Ok(bytes) = parser_rx.recv() {
+					let batch = read_batch(&buffer_t, &item_t, &bytes, &schema);
+					tx.send(batch).unwrap();
+				}
+			});
+		}
+
+
+		for i in 0..1 {
+			let parser_tx = parser_tx.clone();
+
+			let perf_map = PerfBufferBuilder::new(map)
+				.sample_cb(move |cpu: i32, bytes: &[u8]| {
+					let bytes: Vec<u8> = bytes.into();
+					parser_tx.send(bytes).unwrap();
+				})
 			.lost_cb(move |cpu: i32, count: u64| {
-				eprintln!("Lost {count} events on CPU {cpu}");
+				lost_event_handler(cpu, count);
 			})
 			.build()
-			.unwrap();
+				.unwrap();
 
-		thread::spawn(move || {
-			println!("Polling");
-			loop {
-				perf_buffer.poll(Duration::from_secs(10)).unwrap();
-			}
-		});
+			thread::spawn(move || {
+				println!("Polling");
+				loop {
+					perf_map.poll(Duration::from_secs(10)).unwrap();
+				}
+			});
+		}
 		Self { rx, tx }
 	}
 }
@@ -299,6 +362,9 @@ fn read_batch(
 	let mut len: u32 = 0;
 	let mut data: &[u8] = &[0u8];
 
+	// TODO:
+	// This parsing is still quite expensive, incurring a hashmap lookup
+	// for each field in each event struct.
 	for (field, bytes) in buffer_fields.iter() {
 		if field == &"length" {
 			len = u32::from_ne_bytes((*bytes).try_into().unwrap());
