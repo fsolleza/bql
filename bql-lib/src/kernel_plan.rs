@@ -14,7 +14,6 @@ use std::{collections::HashMap, sync::Arc};
 pub struct KernelPlan {
 	ctx: KernelContext,
 	plan: Vec<KernelOperator>,
-	maps: Vec<KernelBpfMap>,
 	code: Option<BpfCode>,
 }
 
@@ -27,7 +26,7 @@ impl KernelPlan {
 		Self {
 			ctx,
 			plan: Vec::new(),
-			maps: Vec::new(),
+			//maps: Vec::new(),
 			code: None,
 		}
 	}
@@ -187,7 +186,7 @@ impl KernelContext {
 		self.inner.ctx_t.definition().into()
 	}
 
-	fn plan(&self) -> KernelPlan {
+	pub fn plan(&self) -> KernelPlan {
 		KernelPlan::new(self.clone())
 	}
 
@@ -268,7 +267,7 @@ impl KernelVariableSource {
 	}
 }
 
-trait AsKernelVariableSource {
+pub trait AsKernelVariableSource {
 	fn as_kernel_variable_source(&self, ctx: &Variable)
 		-> KernelVariableSource;
 }
@@ -430,6 +429,7 @@ impl CurrentTaskField {
 	}
 }
 
+#[derive(Clone)]
 pub enum KernelOperator {
 	SelectKernelData(SelectKernelData),
 	PerfMapBufferAndOutput(PerfMapBufferAndOutput),
@@ -437,6 +437,50 @@ pub enum KernelOperator {
 }
 
 impl KernelOperator {
+	pub fn perf_map(&self) -> Option<Variable> {
+		match self {
+			Self::PerfMapBufferAndOutput(x) => Some(x.perf_map.map.clone()),
+			_ => None,
+		}
+	}
+
+	pub fn buffer_map(&self) -> Option<Variable> {
+		match self {
+			Self::PerfMapBufferAndOutput(x) => Some(x.buffer_map.map.clone()),
+			_ => None,
+		}
+	}
+
+	pub fn perf_map_kind(&self) -> Option<Kind> {
+		match self {
+			Self::PerfMapBufferAndOutput(x) => Some(x.perf_map.map_t.clone()),
+			_ => None,
+		}
+	}
+
+	pub fn buffer_map_kind(&self) -> Option<Kind> {
+		match self {
+			Self::PerfMapBufferAndOutput(x) => Some(x.buffer_map.map_t.clone()),
+			_ => None,
+		}
+	}
+
+	pub fn buffer_kind(&self) -> Option<Kind> {
+		match self {
+			Self::PerfMapBufferAndOutput(x) => {
+				Some(x.buffer_map.map_value_t.clone())
+			}
+			_ => None,
+		}
+	}
+
+	pub fn buffer_item_kind(&self) -> Option<Kind> {
+		match self {
+			Self::PerfMapBufferAndOutput(x) => x.buffer_map.buffer_kind.clone(),
+			_ => None,
+		}
+	}
+
 	pub fn emit_execution_code(&self) -> Vec<CodeUnit> {
 		match self {
 			Self::SelectKernelData(x) => x.emit_execution_code(),
@@ -458,6 +502,7 @@ impl KernelOperator {
 	}
 }
 
+#[derive(Clone)]
 pub struct SelectKernelData {
 	kernel_variable: KernelVariable,
 	op: BinaryOperator,
@@ -529,13 +574,14 @@ impl TupleBuilder {
 		BuildTupleStruct {
 			variable,
 			kind,
-			fields: self.fields,
+			fields: self.fields.into(),
 		}
 	}
 }
 
+#[derive(Clone)]
 pub struct BuildTupleStruct {
-	fields: Vec<(String, Kind, Variable)>,
+	fields: Arc<[(String, Kind, Variable)]>,
 	kind: Kind,
 	variable: Variable,
 }
@@ -636,6 +682,7 @@ pub enum KernelGroupBy {
 //	}
 //}
 
+#[derive(Clone)]
 pub struct PerfMapBufferAndOutput {
 	perf_map: KernelBpfMap,
 	buffer_map: KernelBpfMap,
@@ -657,8 +704,8 @@ impl PerfMapBufferAndOutput {
 		}
 	}
 
-	pub fn into_op(self) -> KernelOperator {
-		KernelOperator::PerfMapBufferAndOutput(self)
+	pub fn into_op(&self) -> KernelOperator {
+		KernelOperator::PerfMapBufferAndOutput(self.clone())
 	}
 
 	fn emit_definition_code(&self) -> Vec<CodeUnit> {
@@ -929,6 +976,7 @@ mod test {
 		builder.add_kernel_variable(target_pid.clone());
 		builder.add_kernel_variable(system_call.clone());
 		builder.add_kernel_variable(pid.clone());
+		builder.add_kernel_variable(timestamp.clone());
 
 		let ctx = builder.build();
 

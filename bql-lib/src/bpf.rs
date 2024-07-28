@@ -1,3 +1,4 @@
+use crate::kernel_plan::PerfMapBufferAndOutput;
 use crossbeam::channel::*;
 use libbpf_rs::{
 	Link, Map, Object, ObjectBuilder, OpenObject, PerfBuffer, PerfBufferBuilder,
