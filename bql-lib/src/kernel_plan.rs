@@ -51,10 +51,13 @@ impl KernelPlan {
 			//code.push(self.output.kind_definition());
 
 			// Define all map types and map variables
-			for map in self.maps.iter() {
-				code.push(map.kind_definition());
-				code.push(map.variable_definition());
+			for op in self.plan.iter() {
+				code.append(&op.emit_definition_code());
 			}
+			//for map in self.maps.iter() {
+			//	code.push(map.kind_definition());
+			//	code.push(map.variable_definition());
+			//}
 
 			// Build program
 			let mut function_builder = self.ctx.program_builder();
@@ -322,66 +325,6 @@ impl KernelVariable {
 	}
 }
 
-//pub struct KernelVariables {
-//	ctx_var: Variable,
-//	sources: HashMap<KernelSchema, KernelDataSource>,
-//}
-//
-//impl KernelVariables {
-//	pub fn new(ctx_var: &Variable) -> Self {
-//		KernelVariables {
-//			ctx_var: ctx_var.clone(),
-//			sources: HashMap::new(),
-//		}
-//	}
-//
-//	pub fn add_kernel_variable(&mut self, schema: KernelSchema) {
-//		let source = KernelDataSource::new(&self.ctx_var, schema);
-//		self.sources.insert(schema, source);
-//	}
-//
-//	pub fn get_variable(&self, source: &KernelSchema) -> Variable {
-//		self.sources.get(source).unwrap().variable.clone()
-//	}
-//
-//	pub fn initialize_variables(&self) -> Vec<CodeUnit> {
-//		let mut units: Vec<CodeUnit> = Vec::new();
-//		for (_, k) in self.sources.iter() {
-//			units.push(k.variable.definition().into());
-//			units.push(k.make_assignment());
-//		}
-//		units
-//	}
-//}
-
-//pub struct KernelDataSource {
-//	ctx_var: Variable,
-//	variable: Variable,
-//	source: KernelSchema,
-//}
-//
-//impl KernelDataSource {
-//	fn new(ctx_var: &Variable, source: KernelSchema) -> Self {
-//		Self {
-//			ctx_var: ctx_var.clone(),
-//			variable: source.make_variable(),
-//			source,
-//		}
-//	}
-//
-//	fn make_assignment(&self) -> Vec<CodeUnit> {
-//		match &self.source {
-//			KernelSchema::SysEnter(x) => {
-//				x.make_assignment(&self.ctx_var, &self.variable)
-//			}
-//			KernelSchema::CurrentTask(x) => {
-//				x.make_assignment(&self.ctx_var, &self.variable)
-//			}
-//			KernelSchema::Timestamp(x) => x.make_assignment(&self.variable),
-//		}
-//	}
-//}
-
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum KernelSchema {
 	SysEnter(SysEnterField),
@@ -494,7 +437,6 @@ impl CurrentTaskField {
 
 pub enum KernelOperator {
 	SelectKernelData(SelectKernelData),
-	//AppendKernelData(AppendKernelData),
 	PerfMapBufferAndOutput(PerfMapBufferAndOutput),
 	BuildTupleStruct(BuildTupleStruct),
 }
@@ -503,14 +445,17 @@ impl KernelOperator {
 	pub fn emit_execution_code(&self) -> Vec<CodeUnit> {
 		match self {
 			Self::SelectKernelData(x) => x.emit_execution_code(),
-			//Self::AppendKernelData(x) => x.emit_execution_code(),
 			Self::PerfMapBufferAndOutput(x) => x.emit_execution_code(),
 			Self::BuildTupleStruct(x) => x.emit_execution_code(),
 		}
 	}
 
-	pub fn emit_defininition_code(&self) -> Vec<CodeUnit> {
-		unimplemented!()
+	pub fn emit_definition_code(&self) -> Vec<CodeUnit> {
+		match self {
+			Self::SelectKernelData(x) => x.emit_definition_code(),
+			Self::PerfMapBufferAndOutput(x) => x.emit_definition_code(),
+			Self::BuildTupleStruct(x) => x.emit_definition_code(),
+		}
 	}
 
 	pub fn emit_initialization_code(&self) -> Vec<CodeUnit> {
@@ -542,6 +487,10 @@ impl SelectKernelData {
 
 	pub fn into_op(self) -> KernelOperator {
 		KernelOperator::SelectKernelData(self)
+	}
+
+	fn emit_definition_code(&self) -> Vec<CodeUnit> {
+		Vec::new()
 	}
 
 	fn emit_execution_code(&self) -> Vec<CodeUnit> {
@@ -600,6 +549,10 @@ impl BuildTupleStruct {
 
 	pub fn into_op(self) -> KernelOperator {
 		KernelOperator::BuildTupleStruct(self)
+	}
+
+	fn emit_definition_code(&self) -> Vec<CodeUnit> {
+		vec![self.kind.definition().into()]
 	}
 
 	pub fn emit_execution_code(&self) -> Vec<CodeUnit> {
@@ -702,6 +655,15 @@ impl PerfMapBufferAndOutput {
 
 	pub fn into_op(self) -> KernelOperator {
 		KernelOperator::PerfMapBufferAndOutput(self)
+	}
+
+	fn emit_definition_code(&self) -> Vec<CodeUnit> {
+		let mut v = Vec::new();
+		v.push(self.perf_map.kind_definition().into());
+		v.push(self.perf_map.variable_definition().into());
+		v.push(self.buffer_map.kind_definition().into());
+		v.push(self.buffer_map.variable_definition().into());
+		v
 	}
 
 	fn emit_execution_code(&self) -> Vec<CodeUnit> {
@@ -985,12 +947,12 @@ mod test {
 		let var = build_tuple.variable();
 		let build_tuple = build_tuple.into_op();
 
-		let output_op =
-			PerfMapBufferAndOutput::new(&ctx, &var).into_op();
+		let output_op = PerfMapBufferAndOutput::new(&ctx, &var).into_op();
 
 		let mut plan = ctx.plan();
 		plan.add_op(remove_this_pid_op);
 		plan.add_op(build_tuple);
+		plan.add_op(output_op);
 
 		let code = plan.emit_code();
 		println!("{}", clang_format(&code.as_str()).unwrap());

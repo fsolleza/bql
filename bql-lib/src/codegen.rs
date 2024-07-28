@@ -685,6 +685,7 @@ impl FunctionCall {
 	}
 }
 
+#[derive(Clone)]
 pub struct FunctionDefinition {
 	func: Function,
 }
@@ -695,6 +696,7 @@ impl FunctionDefinition {
 	}
 }
 
+#[derive(Clone)]
 pub struct BpfProgramDefinition {
 	bpf: BpfProgram,
 }
@@ -711,6 +713,7 @@ impl Into<BpfProgramDefinition> for &BpfProgram {
 	}
 }
 
+#[derive(Clone)]
 pub enum CodeUnit {
 	Include(Include),
 	KindDefinition(KindDefinition),
@@ -798,6 +801,7 @@ impl Into<CodeUnit> for LvalueAssignment {
 	}
 }
 
+#[derive(Clone)]
 pub enum Include {
 	FilePath(String),
 	Library(String),
@@ -812,6 +816,7 @@ impl Include {
 	}
 }
 
+#[derive(Clone)]
 pub struct KindDefinition {
 	typ: Kind,
 }
@@ -825,6 +830,7 @@ impl KindDefinition {
 	}
 }
 
+#[derive(Clone)]
 pub struct VariableDefinition {
 	var: Variable,
 }
@@ -837,6 +843,7 @@ impl VariableDefinition {
 	}
 }
 
+#[derive(Clone)]
 pub struct IfBlock {
 	expr: Expr,
 	block: ScopeBlock,
@@ -856,6 +863,7 @@ impl IfBlock {
 	}
 }
 
+#[derive(Clone)]
 pub struct ScopeBlock {
 	units: Vec<CodeUnit>,
 }
@@ -867,6 +875,12 @@ impl ScopeBlock {
 
 	pub fn push(&mut self, unit: CodeUnit) {
 		self.units.push(unit);
+	}
+
+	pub fn append(&mut self, units: &[CodeUnit]) {
+		for unit in units {
+			self.units.push(unit.clone())
+		}
 	}
 
 	pub fn gen_code_block(&self) -> String {
@@ -1775,6 +1789,7 @@ impl LvalueMember {
 	}
 }
 
+#[derive(Clone)]
 pub enum LvalueAssignmentOperator {
 	Assign,
 	AddAssign,
@@ -1789,6 +1804,7 @@ impl LvalueAssignmentOperator {
 	}
 }
 
+#[derive(Clone)]
 pub struct LvalueAssignment {
 	lvalue: Lvalue,
 	op: LvalueAssignmentOperator,
@@ -1836,6 +1852,12 @@ impl CodeGen {
 
 	pub fn push(&mut self, unit: CodeUnit) {
 		self.units.push(unit);
+	}
+
+	pub fn append(&mut self, units: &[CodeUnit]) {
+		for unit in units {
+			self.units.push(unit.clone())
+		}
 	}
 
 	pub fn new() -> Self {
