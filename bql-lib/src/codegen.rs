@@ -723,6 +723,7 @@ pub enum CodeUnit {
 	Expr(Expr),
 	If(IfBlock),
 	ScopeBlock(ScopeBlock),
+	Comment(String),
 	BpfLicense,
 	BpfProgramDefinition(BpfProgramDefinition),
 	Return(Expr),
@@ -740,6 +741,7 @@ impl CodeUnit {
 			Self::ScopeBlock(x) => x.gen_code_unit(),
 			Self::BpfProgramDefinition(x) => x.gen_code_unit(),
 			Self::LvalueAssignment(x) => x.gen_code_unit(),
+			Self::Comment(x) => {format!("\n//{}\n", x)},
 			Self::Return(x) => {
 				format!("return {};\n", x.gen_expression())
 			}

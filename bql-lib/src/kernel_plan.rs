@@ -54,18 +54,9 @@ impl KernelPlan {
 			for op in self.plan.iter() {
 				code.append(&op.emit_definition_code());
 			}
-			//for map in self.maps.iter() {
-			//	code.push(map.kind_definition());
-			//	code.push(map.variable_definition());
-			//}
 
 			// Build program
 			let mut function_builder = self.ctx.program_builder();
-
-			// We always define the output struct first
-			//for unit in self.output.variable_definition() {
-			//	function_builder.append_code_unit(unit);
-			//}
 
 			// Then execute every op sequentially
 			for op in self.plan.iter() {
@@ -74,10 +65,14 @@ impl KernelPlan {
 				}
 			}
 
-			let handle_sys_enter = function_builder.build();
+			let handle_sys_enter:BpfProgram = function_builder.build();
 
+			code.push(CodeUnit::Comment("Begin BPF Program".into()));
 			code.push(handle_sys_enter.definition().into());
+
+			code.push(CodeUnit::Comment("Required License".into()));
 			code.push(CodeUnit::BpfLicense);
+
 			self.code = Some(BpfCode::new(&code.emit_code()));
 		}
 		self.code.as_ref().unwrap()
@@ -501,7 +496,10 @@ impl SelectKernelData {
 		);
 		let mut filter_block = ScopeBlock::new();
 		filter_block.push(CodeUnit::Return(Expr::uint(0).into()).into());
-		vec![IfBlock::from_parts(filter, filter_block).into()]
+		vec![
+			CodeUnit::Comment("Execution for SelectKernelData operator".into()),
+			IfBlock::from_parts(filter, filter_block).into()
+		]
 	}
 }
 
@@ -552,11 +550,15 @@ impl BuildTupleStruct {
 	}
 
 	fn emit_definition_code(&self) -> Vec<CodeUnit> {
-		vec![self.kind.definition().into()]
+		vec![
+			CodeUnit::Comment("Struct for a BuildTupleStruct operator".into()),
+			self.kind.definition().into()
+		]
 	}
 
 	pub fn emit_execution_code(&self) -> Vec<CodeUnit> {
 		let mut code_units: Vec<CodeUnit> = Vec::new();
+		code_units.push(CodeUnit::Comment("Execution for BuildTupleStruct operator".into()));
 		code_units.push(self.variable.definition().into());
 		for (n, _, v) in self.fields.iter() {
 			let e = v.expr();
@@ -659,6 +661,7 @@ impl PerfMapBufferAndOutput {
 
 	fn emit_definition_code(&self) -> Vec<CodeUnit> {
 		let mut v = Vec::new();
+		v.push(CodeUnit::Comment("Definitions for PerfMapBufferOutput operator".into()));
 		v.push(self.perf_map.kind_definition().into());
 		v.push(self.perf_map.variable_definition().into());
 		v.push(self.buffer_map.kind_definition().into());
@@ -668,6 +671,7 @@ impl PerfMapBufferAndOutput {
 
 	fn emit_execution_code(&self) -> Vec<CodeUnit> {
 		let mut result: Vec<CodeUnit> = Vec::new();
+		result.push(CodeUnit::Comment("Execution for PerfMapBufferOutput operator".into()));
 
 		let buffer_capacity = self.buffer_map.buffer_capacity().unwrap() as u64;
 		let bpf_perf_event_output =
