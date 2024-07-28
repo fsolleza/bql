@@ -65,7 +65,7 @@ impl KernelPlan {
 				}
 			}
 
-			let handle_sys_enter:BpfProgram = function_builder.build();
+			let handle_sys_enter: BpfProgram = function_builder.build();
 
 			code.push(CodeUnit::Comment("Begin BPF Program".into()));
 			code.push(handle_sys_enter.definition().into());
@@ -498,7 +498,7 @@ impl SelectKernelData {
 		filter_block.push(CodeUnit::Return(Expr::uint(0).into()).into());
 		vec![
 			CodeUnit::Comment("Execution for SelectKernelData operator".into()),
-			IfBlock::from_parts(filter, filter_block).into()
+			IfBlock::from_parts(filter, filter_block).into(),
 		]
 	}
 }
@@ -552,13 +552,15 @@ impl BuildTupleStruct {
 	fn emit_definition_code(&self) -> Vec<CodeUnit> {
 		vec![
 			CodeUnit::Comment("Struct for a BuildTupleStruct operator".into()),
-			self.kind.definition().into()
+			self.kind.definition().into(),
 		]
 	}
 
 	pub fn emit_execution_code(&self) -> Vec<CodeUnit> {
 		let mut code_units: Vec<CodeUnit> = Vec::new();
-		code_units.push(CodeUnit::Comment("Execution for BuildTupleStruct operator".into()));
+		code_units.push(CodeUnit::Comment(
+			"Execution for BuildTupleStruct operator".into(),
+		));
 		code_units.push(self.variable.definition().into());
 		for (n, _, v) in self.fields.iter() {
 			let e = v.expr();
@@ -661,7 +663,9 @@ impl PerfMapBufferAndOutput {
 
 	fn emit_definition_code(&self) -> Vec<CodeUnit> {
 		let mut v = Vec::new();
-		v.push(CodeUnit::Comment("Definitions for PerfMapBufferOutput operator".into()));
+		v.push(CodeUnit::Comment(
+			"Definitions for PerfMapBufferOutput operator".into(),
+		));
 		v.push(self.perf_map.kind_definition().into());
 		v.push(self.perf_map.variable_definition().into());
 		v.push(self.buffer_map.kind_definition().into());
@@ -671,7 +675,9 @@ impl PerfMapBufferAndOutput {
 
 	fn emit_execution_code(&self) -> Vec<CodeUnit> {
 		let mut result: Vec<CodeUnit> = Vec::new();
-		result.push(CodeUnit::Comment("Execution for PerfMapBufferOutput operator".into()));
+		result.push(CodeUnit::Comment(
+			"Execution for PerfMapBufferOutput operator".into(),
+		));
 
 		let buffer_capacity = self.buffer_map.buffer_capacity().unwrap() as u64;
 		let bpf_perf_event_output =
