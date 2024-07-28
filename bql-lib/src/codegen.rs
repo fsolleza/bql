@@ -1145,6 +1145,10 @@ impl Variable {
 	pub fn name(&self) -> String {
 		self.inner.name()
 	}
+
+	pub fn kind(&self) -> Kind {
+		self.inner.typ.clone()
+	}
 }
 
 pub struct InnerVariable {
@@ -1360,6 +1364,7 @@ impl Struct {
 pub enum BpfMap {
 	PerfEventArray(PerfEventArray),
 	PerCpuArray(PerCpuArray),
+	BpfHashMap(BpfHashMap),
 }
 
 impl BpfMap {
@@ -1367,6 +1372,7 @@ impl BpfMap {
 		match self {
 			Self::PerfEventArray(x) => x.gen_signature(),
 			Self::PerCpuArray(x) => x.gen_signature(),
+			Self::BpfHashMap(x) => x.gen_signature(),
 		}
 	}
 
@@ -1374,6 +1380,7 @@ impl BpfMap {
 		match self {
 			Self::PerfEventArray(x) => x.gen_definition(),
 			Self::PerCpuArray(x) => x.gen_definition(),
+			Self::BpfHashMap(x) => x.gen_definition(),
 		}
 	}
 
@@ -1383,6 +1390,10 @@ impl BpfMap {
 
 	pub fn perf_event_array(key_size: Scalar, value_size: Scalar) -> Self {
 		Self::PerfEventArray(PerfEventArray::new(key_size, value_size))
+	}
+
+	pub fn bpf_hashmap(key: &Kind, value: &Kind, max_entries: u64) -> Self {
+		Self::BpfHashMap(BpfHashMap::new(key, value, max_entries))
 	}
 }
 
@@ -1395,6 +1406,66 @@ impl Into<BpfMap> for PerfEventArray {
 impl Into<BpfMap> for PerCpuArray {
 	fn into(self) -> BpfMap {
 		BpfMap::PerCpuArray(self)
+	}
+}
+
+#[derive(Clone)]
+pub struct BpfHashMap {
+	key: Kind,
+	value: Kind,
+	max_entries: u64,
+	id: u64,
+}
+
+impl BpfHashMap {
+	pub fn new_with_id(
+		key: &Kind,
+		value: &Kind,
+		max_entries: u64,
+		id: u64,
+	) -> Self {
+		Self {
+			key: key.clone(),
+			value: value.clone(),
+			max_entries,
+			id,
+		}
+	}
+
+	pub fn new(key: &Kind, value: &Kind, max_entries: u64) -> Self {
+		Self::new_with_id(key, value, max_entries, TYPEID.fetch_add(1, SeqCst))
+	}
+
+	pub fn gen_signature(&self) -> String {
+		format!("bpf_hashmap_t_{}", self.id)
+	}
+
+	pub fn gen_definition(&self) -> String {
+		let mut s: String = "".into();
+
+		if !self.key.is_defined() {
+			s.push_str(&self.key.gen_definition());
+			s.push_str(";\n");
+		}
+
+		if !self.value.is_defined() {
+			s.push_str(&self.value.gen_definition());
+			s.push_str(";\n");
+		}
+
+		s.push_str("typedef struct {\n");
+		s.push_str("__uint(type, BPF_MAP_TYPE_HASH);\n");
+
+		let k = format!("__type(key, {});\n", self.key.gen_signature());
+		let v = format!("__type(value, {});\n", self.value.gen_signature());
+		let e = format!("__uint(max_entries, {});\n", self.max_entries);
+		s.push_str(&k);
+		s.push_str(&v);
+		s.push_str(&e);
+
+		let map_type = format!("bpf_hashmap_t_{}", self.id);
+		s.push_str(&format!("}} {}", map_type));
+		s
 	}
 }
 

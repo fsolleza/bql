@@ -279,6 +279,26 @@ impl Noop {
 	}
 }
 
+pub struct ReadFromBpfHashMap {
+	rx: Receiver<Batch>,
+	tx: Sender<Batch>,
+}
+
+impl ReadFromBpfHashMap {
+	pub fn new(
+		map: &mut Map,
+		item_t: &Kind,
+		buffer_t: &Kind,
+		schema: &Schema,
+		interval: Duration,
+	) -> Self {
+		unimplemented!()
+
+		//let (tx, rx) = unbounded();
+		//let (parser_tx, parser_rx): (Sender<Vec<u8>>, _) = unbounded();
+	}
+}
+
 pub struct ReadFromPerfEventArray {
 	rx: Receiver<Batch>,
 	tx: Sender<Batch>,
@@ -321,28 +341,25 @@ impl ReadFromPerfEventArray {
 			});
 		}
 
+		let parser_tx = parser_tx.clone();
 
-		for i in 0..1 {
-			let parser_tx = parser_tx.clone();
-
-			let perf_map = PerfBufferBuilder::new(map)
-				.sample_cb(move |cpu: i32, bytes: &[u8]| {
-					let bytes: Vec<u8> = bytes.into();
-					parser_tx.send(bytes).unwrap();
-				})
+		let perf_map = PerfBufferBuilder::new(map)
+			.sample_cb(move |cpu: i32, bytes: &[u8]| {
+				let bytes: Vec<u8> = bytes.into();
+				parser_tx.send(bytes).unwrap();
+			})
 			.lost_cb(move |cpu: i32, count: u64| {
 				lost_event_handler(cpu, count);
 			})
 			.build()
-				.unwrap();
+			.unwrap();
 
-			thread::spawn(move || {
-				println!("Polling");
-				loop {
-					perf_map.poll(Duration::from_secs(10)).unwrap();
-				}
-			});
-		}
+		thread::spawn(move || {
+			println!("Polling");
+			loop {
+				perf_map.poll(Duration::from_secs(10)).unwrap();
+			}
+		});
 		Self { rx, tx }
 	}
 }

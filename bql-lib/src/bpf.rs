@@ -37,6 +37,10 @@ pub struct BpfCode {
 }
 
 impl BpfCode {
+	pub fn as_str(&self) -> &str {
+		&self.code
+	}
+
 	pub fn new(code: &str) -> Self {
 		Self { code: code.into() }
 	}
