@@ -1,9 +1,9 @@
 use crate::bpf::{BpfCode, BpfObject};
 use crate::codegen::{
 	BinaryOperator, BpfMap, BpfProgram, BpfProgramDefinition, CodeGen,
-	CodeUnit, Expr, Function, FunctionBuilder, FunctionDeclaration, IfBlock,
-	Include, Kind, Lvalue, LvalueAssignment, PerCpuArray, Scalar, ScopeBlock,
-	UnaryOperator, Variable,
+	CodeUnit, ElseBlock, Expr, Function, FunctionBuilder, FunctionDeclaration,
+	IfBlock, Include, Kind, Lvalue, LvalueAssignment, PerCpuArray, Scalar,
+	ScopeBlock, UnaryOperator, Variable,
 };
 use crossbeam::channel::{unbounded, Receiver, Sender};
 
@@ -434,6 +434,7 @@ pub enum KernelOperator {
 	SelectKernelData(SelectKernelData),
 	PerfMapBufferAndOutput(PerfMapBufferAndOutput),
 	BuildTupleStruct(BuildTupleStruct),
+	BpfHashMapGroupBy(BpfHashMapGroupBy),
 }
 
 impl KernelOperator {
@@ -486,6 +487,7 @@ impl KernelOperator {
 			Self::SelectKernelData(x) => x.emit_execution_code(),
 			Self::PerfMapBufferAndOutput(x) => x.emit_execution_code(),
 			Self::BuildTupleStruct(x) => x.emit_execution_code(),
+			Self::BpfHashMapGroupBy(x) => x.emit_execution_code(),
 		}
 	}
 
@@ -494,6 +496,7 @@ impl KernelOperator {
 			Self::SelectKernelData(x) => x.emit_definition_code(),
 			Self::PerfMapBufferAndOutput(x) => x.emit_definition_code(),
 			Self::BuildTupleStruct(x) => x.emit_definition_code(),
+			Self::BpfHashMapGroupBy(x) => x.emit_definition_code(),
 		}
 	}
 
@@ -617,70 +620,111 @@ impl BuildTupleStruct {
 	}
 }
 
-//pub struct AppendKernelData {
-//	kernel_data: KernelSchema,
-//	kernel_ctx: KernelContext,
-//	dst: Lvalue,
-//}
-//
-//impl AppendKernelData {
-//	pub fn new(
-//		kernel_ctx: &KernelContext,
-//		kernel_data: KernelSchema,
-//		dst: Lvalue,
-//	) -> Self {
-//		Self {
-//			kernel_data,
-//			kernel_ctx: kernel_ctx.clone(),
-//			dst,
-//		}
-//	}
-//
-//	pub fn into_op(self) -> KernelOperator {
-//		KernelOperator::AppendKernelData(self)
-//	}
-//
-//	fn emit_execution_code(&self) -> Vec<CodeUnit> {
-//		let variable = self.kernel_ctx.get_kernel_variable(&self.kernel_data);
-//		vec![self.dst.assign(&variable.expr()).into()]
-//	}
-//}
-
-pub enum KernelGroupBy {
+#[derive(Clone)]
+pub enum Aggregation {
 	Count,
 }
 
-//pub struct BpfHashMapGroupBy {
-//	hash_map: KernelBpfMap,
-//	hashmap_var: Variable,
-//	ctx: KernelContext,
-//	group_by: KernelGroupBy,
-//	key: Variable,
-//}
-//
-//impl BpfHashMapGroupBy {
-//	pub fn new(
-//		ctx: &KernelContext,
-//		hash_map: &KernelBpfMap,
-//		hashmap_var: &Variable,
-//		source_var: &Variable,
-//		key: &Variable,
-//		group_by: KernelGroupBy,
-//	) -> Self {
-//		Self {
-//			hash_map: hash_map.clone(),
-//			var: var.clone(),
-//			ctx: ctx.clone(),
-//			source_var: ctx.clone(),
-//			key: key.clone(),
-//			group_by,
-//		}
-//	}
-//
-//	fn emit_execution_code(&self) -> Vec<CodeUnit> {
-//		unimplemented!()
-//	}
-//}
+#[derive(Clone)]
+pub struct BpfHashMapGroupBy {
+	hashmap: KernelBpfMap,
+	ctx: KernelContext,
+	key: Variable,
+	group_by: Aggregation,
+}
+
+impl BpfHashMapGroupBy {
+	pub fn new(
+		ctx: &KernelContext,
+		key: &Variable,
+		group_by: Aggregation,
+	) -> Self {
+		let hashmap =
+			KernelBpfMap::hashmap(&key.kind(), &Kind::uint64_t(), 1024);
+		Self {
+			hashmap,
+			ctx: ctx.clone(),
+			key: key.clone(),
+			group_by,
+		}
+	}
+
+	pub fn into_op(self) -> KernelOperator {
+		KernelOperator::BpfHashMapGroupBy(self)
+	}
+
+	fn emit_definition_code(&self) -> Vec<CodeUnit> {
+		let mut v = Vec::new();
+		v.push(CodeUnit::Comment(
+			"Definitions for BpfHashMapGroupBy operator".into(),
+		));
+		v.push(self.hashmap.kind_definition().into());
+		v.push(self.hashmap.variable_definition().into());
+		v
+	}
+
+	fn emit_execution_code(&self) -> Vec<CodeUnit> {
+		// int* value = bpf_map_lookup_elem(&syscall_map, &syscall_number);
+		// if (!value) {
+		//     int one = 1;
+		//     bpf_map_update_elem(&syscall_map, &syscall_number, &one, BPF_ANY);
+		// } else {
+		//     int val = *value + 1;
+		//     bpf_map_update_elem(&syscall_map, &syscall_number, &val , BPF_ANY);
+		// }
+
+		let bpf_map_lookup_elem = Function::with_name("bpf_map_lookup_elem");
+		let bpf_map_update_elem = Function::with_name("bpf_map_update_elem");
+
+		let mut result = Vec::new();
+
+		result.push(CodeUnit::Comment(
+			"Execution of BpfHashMapGroupBy operator".into(),
+		));
+
+		/*
+		 * Lookup the buffer in the buffermap
+		 */
+		let entry_ptr =
+			Variable::new(&self.hashmap.map_value_t.pointer(), None);
+		let expr = bpf_map_lookup_elem.call(vec![
+			self.hashmap.map.expr().reference(),
+			self.key.expr().reference(),
+		]);
+		let assign = entry_ptr.lvalue().assign(&expr);
+
+		let updated_var = Variable::new(&Kind::uint64_t(), None);
+		let updated_var_assign = updated_var.lvalue().assign(&Expr::uint(1));
+
+		result.push(entry_ptr.definition().into());
+		result.push(assign.into());
+		result.push(updated_var.definition().into());
+		result.push(updated_var_assign.into());
+
+		/*
+		 * Check if entry is null
+		 * if (value) {
+		 *     updated_var += *value;
+		 * }
+		 */
+		let mut check_block = ScopeBlock::new();
+		let assign = updated_var.lvalue().add_assign(&entry_ptr.expr().deref());
+		check_block.push(assign.into());
+
+		result.push(IfBlock::from_parts(entry_ptr.expr(), check_block).into());
+
+		let expr = bpf_map_update_elem.call(vec![
+			self.hashmap.map.expr().reference(),
+			self.key.expr().reference(),
+			updated_var.expr().reference(),
+			Scalar::cconst("BPF_ANY").into_expr(),
+		]);
+
+		result.push(expr.into());
+
+		result
+	}
+}
 
 #[derive(Clone)]
 pub struct PerfMapBufferAndOutput {
@@ -779,7 +823,7 @@ impl PerfMapBufferAndOutput {
 		let assign = buffer_ptr
 			.lvalue()
 			.ref_member("length")
-			.add_assign(Expr::uint(1));
+			.add_assign(&Expr::uint(1));
 		block.push(assign.into());
 		result.push(IfBlock::from_parts(buffer_len_check, block).into());
 
@@ -829,6 +873,7 @@ impl PerfMapBufferAndOutput {
 enum BpfMapType {
 	PerfEventArray,
 	PerCpuBuffer,
+	HashMap,
 }
 
 #[derive(Clone)]
@@ -862,6 +907,25 @@ impl KernelBpfMap {
 
 	pub fn map_variable(&self) -> Variable {
 		self.map.clone()
+	}
+
+	pub fn hashmap(key: &Kind, value: &Kind, max_entries: u64) -> Self {
+		let map_t = Kind::bpf_map(BpfMap::bpf_hashmap(key, value, max_entries));
+		let map_value_t = value.clone();
+		let map_key_t = key.clone();
+		let map = Variable::new(&map_t, None);
+		let map_type = BpfMapType::HashMap;
+
+		Self {
+			map_value_t,
+			map_key_t,
+			map_t,
+			map,
+			map_type,
+
+			buffer_capacity: None,
+			buffer_kind: None,
+		}
 	}
 
 	pub fn perf_event_array(output_t: &Kind) -> Self {
@@ -982,18 +1046,23 @@ mod test {
 
 		let this_pid = std::process::id();
 		let remove_this_pid_op = SelectKernelData::new(
-			pid,
+			pid.clone(),
 			BinaryOperator::Neq,
 			Expr::uint(this_pid as u64),
 			&ctx,
 		)
 		.into_op();
 
-		let output_struct = Kind::cstruct(&[
-			("timestamp".into(), Kind::uint64_t()),
-			("syscall_number".into(), Kind::uint64_t()),
-			("pid".into(), Kind::uint64_t()),
-		]);
+		let (build_groupby_key_op, var) = {
+			let mut a = TupleBuilder::new();
+			a.add_field("pid".into(), &Kind::uint64_t(), &pid.variable());
+			let a = a.build();
+			let var = a.variable();
+			(a.into_op(), var)
+		};
+
+		let groupby =
+			BpfHashMapGroupBy::new(&ctx, &var, Aggregation::Count).into_op();
 
 		let mut build_tuple = TupleBuilder::new();
 		build_tuple.add_field(
@@ -1010,6 +1079,8 @@ mod test {
 		let mut plan = ctx.plan();
 		plan.add_op(remove_this_pid_op);
 		plan.add_op(build_tuple);
+		plan.add_op(build_groupby_key_op);
+		plan.add_op(groupby);
 		plan.add_op(output_op);
 
 		let code = plan.emit_code();

@@ -722,6 +722,7 @@ pub enum CodeUnit {
 	LvalueAssignment(LvalueAssignment),
 	Expr(Expr),
 	If(IfBlock),
+	Else(ElseBlock),
 	ScopeBlock(ScopeBlock),
 	Comment(String),
 	BpfLicense,
@@ -737,6 +738,7 @@ impl CodeUnit {
 			Self::FunctionDefinition(x) => x.gen_code_unit(),
 			Self::Expr(x) => x.gen_code_unit(),
 			Self::If(x) => x.gen_code_unit(),
+			Self::Else(x) => x.gen_code_unit(),
 			Self::Include(x) => x.gen_code_unit(),
 			Self::ScopeBlock(x) => x.gen_code_unit(),
 			Self::BpfProgramDefinition(x) => x.gen_code_unit(),
@@ -799,6 +801,12 @@ impl Into<CodeUnit> for IfBlock {
 	}
 }
 
+impl Into<CodeUnit> for ElseBlock {
+	fn into(self) -> CodeUnit {
+		CodeUnit::Else(self)
+	}
+}
+
 impl Into<CodeUnit> for LvalueAssignment {
 	fn into(self) -> CodeUnit {
 		CodeUnit::LvalueAssignment(self)
@@ -844,6 +852,21 @@ impl VariableDefinition {
 		let mut s = self.var.gen_definition();
 		s.push_str(";\n");
 		s
+	}
+}
+
+#[derive(Clone)]
+pub struct ElseBlock {
+	block: ScopeBlock,
+}
+
+impl ElseBlock {
+	pub fn new(block: ScopeBlock) -> Self {
+		Self { block }
+	}
+
+	pub fn gen_code_unit(&self) -> String {
+		format!("else \n{}", self.block.gen_code_block())
 	}
 }
 
@@ -1691,11 +1714,11 @@ impl Lvalue {
 		}
 	}
 
-	pub fn add_assign(&self, expr: Expr) -> LvalueAssignment {
+	pub fn add_assign(&self, expr: &Expr) -> LvalueAssignment {
 		LvalueAssignment {
 			lvalue: self.clone(),
 			op: LvalueAssignmentOperator::AddAssign,
-			expr,
+			expr: expr.clone(),
 			deref: false,
 		}
 	}
@@ -2357,7 +2380,7 @@ mod test {
 		let assign = buffer_ptr
 			.lvalue()
 			.ref_member("length")
-			.add_assign(Expr::uint(1));
+			.add_assign(&Expr::uint(1));
 		block.push(assign.into());
 
 		if_scope_block

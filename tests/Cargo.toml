@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 bql-lib = { path = "../bql-lib" }
 clap = { version = "4", features = ["derive"] }
+clang-format = "0.3.0"
