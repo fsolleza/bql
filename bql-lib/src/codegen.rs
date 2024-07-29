@@ -1405,7 +1405,7 @@ impl Struct {
 pub enum BpfMap {
 	PerfEventArray(PerfEventArray),
 	PerCpuArray(PerCpuArray),
-	BpfHashMap(BpfHashMap),
+	BpfPerCpuHash(BpfPerCpuHash),
 }
 
 impl BpfMap {
@@ -1413,7 +1413,7 @@ impl BpfMap {
 		match self {
 			Self::PerfEventArray(x) => x.gen_signature(),
 			Self::PerCpuArray(x) => x.gen_signature(),
-			Self::BpfHashMap(x) => x.gen_signature(),
+			Self::BpfPerCpuHash(x) => x.gen_signature(),
 		}
 	}
 
@@ -1421,7 +1421,7 @@ impl BpfMap {
 		match self {
 			Self::PerfEventArray(x) => x.gen_definition(),
 			Self::PerCpuArray(x) => x.gen_definition(),
-			Self::BpfHashMap(x) => x.gen_definition(),
+			Self::BpfPerCpuHash(x) => x.gen_definition(),
 		}
 	}
 
@@ -1433,8 +1433,8 @@ impl BpfMap {
 		Self::PerfEventArray(PerfEventArray::new(key_size, value_size))
 	}
 
-	pub fn bpf_hashmap(key: &Kind, value: &Kind, max_entries: u64) -> Self {
-		Self::BpfHashMap(BpfHashMap::new(key, value, max_entries))
+	pub fn bpf_percpu_hash(key: &Kind, value: &Kind, max_entries: u64) -> Self {
+		Self::BpfPerCpuHash(BpfPerCpuHash::new(key, value, max_entries))
 	}
 }
 
@@ -1451,14 +1451,14 @@ impl Into<BpfMap> for PerCpuArray {
 }
 
 #[derive(Clone)]
-pub struct BpfHashMap {
+pub struct BpfPerCpuHash {
 	key: Kind,
 	value: Kind,
 	max_entries: u64,
 	id: u64,
 }
 
-impl BpfHashMap {
+impl BpfPerCpuHash {
 	pub fn new_with_id(
 		key: &Kind,
 		value: &Kind,
@@ -1495,7 +1495,7 @@ impl BpfHashMap {
 		}
 
 		s.push_str("typedef struct {\n");
-		s.push_str("__uint(type, BPF_MAP_TYPE_HASH);\n");
+		s.push_str("__uint(type, BPF_MAP_TYPE_PERCPU_HASH);\n");
 
 		let k = format!("__type(key, {});\n", self.key.gen_signature());
 		let v = format!("__type(value, {});\n", self.value.gen_signature());

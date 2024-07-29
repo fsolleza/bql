@@ -434,10 +434,17 @@ pub enum KernelOperator {
 	SelectKernelData(SelectKernelData),
 	PerfMapBufferAndOutput(PerfMapBufferAndOutput),
 	BuildTupleStruct(BuildTupleStruct),
-	BpfHashMapGroupBy(BpfHashMapGroupBy),
+	BpfPerCpuHashGroupBy(BpfPerCpuHashGroupBy),
 }
 
 impl KernelOperator {
+	pub fn groupby_map(&self) -> Option<Variable> {
+		match self {
+			Self::BpfPerCpuHashGroupBy(x) => Some(x.hashmap.map.clone()),
+			_ => None,
+		}
+	}
+
 	pub fn perf_map(&self) -> Option<Variable> {
 		match self {
 			Self::PerfMapBufferAndOutput(x) => Some(x.perf_map.map.clone()),
@@ -487,7 +494,7 @@ impl KernelOperator {
 			Self::SelectKernelData(x) => x.emit_execution_code(),
 			Self::PerfMapBufferAndOutput(x) => x.emit_execution_code(),
 			Self::BuildTupleStruct(x) => x.emit_execution_code(),
-			Self::BpfHashMapGroupBy(x) => x.emit_execution_code(),
+			Self::BpfPerCpuHashGroupBy(x) => x.emit_execution_code(),
 		}
 	}
 
@@ -496,7 +503,7 @@ impl KernelOperator {
 			Self::SelectKernelData(x) => x.emit_definition_code(),
 			Self::PerfMapBufferAndOutput(x) => x.emit_definition_code(),
 			Self::BuildTupleStruct(x) => x.emit_definition_code(),
-			Self::BpfHashMapGroupBy(x) => x.emit_definition_code(),
+			Self::BpfPerCpuHashGroupBy(x) => x.emit_definition_code(),
 		}
 	}
 
@@ -626,21 +633,21 @@ pub enum Aggregation {
 }
 
 #[derive(Clone)]
-pub struct BpfHashMapGroupBy {
+pub struct BpfPerCpuHashGroupBy {
 	hashmap: KernelBpfMap,
 	ctx: KernelContext,
 	key: Variable,
 	group_by: Aggregation,
 }
 
-impl BpfHashMapGroupBy {
+impl BpfPerCpuHashGroupBy {
 	pub fn new(
 		ctx: &KernelContext,
 		key: &Variable,
 		group_by: Aggregation,
 	) -> Self {
 		let hashmap =
-			KernelBpfMap::hashmap(&key.kind(), &Kind::uint64_t(), 1024);
+			KernelBpfMap::percpu_hashmap(&key.kind(), &Kind::uint64_t(), 1024);
 		Self {
 			hashmap,
 			ctx: ctx.clone(),
@@ -649,14 +656,18 @@ impl BpfHashMapGroupBy {
 		}
 	}
 
+	pub fn map_name(&self) -> String {
+		self.hashmap.map.name()
+	}
+
 	pub fn into_op(self) -> KernelOperator {
-		KernelOperator::BpfHashMapGroupBy(self)
+		KernelOperator::BpfPerCpuHashGroupBy(self)
 	}
 
 	fn emit_definition_code(&self) -> Vec<CodeUnit> {
 		let mut v = Vec::new();
 		v.push(CodeUnit::Comment(
-			"Definitions for BpfHashMapGroupBy operator".into(),
+			"Definitions for BpfPerCpuHashGroupBy operator".into(),
 		));
 		v.push(self.hashmap.kind_definition().into());
 		v.push(self.hashmap.variable_definition().into());
@@ -909,8 +920,9 @@ impl KernelBpfMap {
 		self.map.clone()
 	}
 
-	pub fn hashmap(key: &Kind, value: &Kind, max_entries: u64) -> Self {
-		let map_t = Kind::bpf_map(BpfMap::bpf_hashmap(key, value, max_entries));
+	pub fn percpu_hashmap(key: &Kind, value: &Kind, max_entries: u64) -> Self {
+		let map_t =
+			Kind::bpf_map(BpfMap::bpf_percpu_hash(key, value, max_entries));
 		let map_value_t = value.clone();
 		let map_key_t = key.clone();
 		let map = Variable::new(&map_t, None);

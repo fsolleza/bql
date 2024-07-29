@@ -3,12 +3,12 @@ use crate::codegen::Kind;
 use crate::schema::*;
 use crate::user_plan_helpers::*;
 use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
-use libbpf_rs::{Map, PerfBufferBuilder};
+use libbpf_rs::{Map, MapHandle, MapFlags, PerfBufferBuilder};
 use std::collections::HashMap;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug)]
 pub enum Scalar {
@@ -29,6 +29,20 @@ impl Column {
 		match self {
 			Self::U64(x) => x.len(),
 			Self::I64(x) => x.len(),
+		}
+	}
+
+	pub fn as_slice_u64(&self) -> Option<&[u64]> {
+		match self {
+			Self::U64(x) => Some(&x[..]),
+			_ => None,
+		}
+	}
+
+	pub fn as_slice_i64(&self) -> Option<&[i64]> {
+		match self {
+			Self::I64(x) => Some(&x[..]),
+			_ => None,
 		}
 	}
 }
@@ -73,33 +87,38 @@ impl ColumnBuilder {
 }
 
 struct BatchBuilder {
-	columns: HashMap<String, ColumnBuilder>,
+	columns: Vec<(String, ColumnBuilder)>,
 	len: usize,
 }
 
 impl BatchBuilder {
 	fn get_column_mut(&mut self, name: &str) -> Option<&mut ColumnBuilder> {
-		self.columns.get_mut(name)
+		for (k, v)  in self.columns.iter_mut() {
+			if k == name {
+				return Some(v);
+			}
+		}
+		None
 	}
 
 	fn from_schema(schema: &Schema) -> Self {
 		let mut batch = BatchBuilder {
-			columns: HashMap::new(),
+			columns: Vec::new(),
 			len: 0,
 		};
 		for (name, kind) in schema.iter() {
 			batch
 				.columns
-				.insert(name.into(), ColumnBuilder::from_schema_kind(kind));
+				.push((name.into(), ColumnBuilder::from_schema_kind(kind)));
 		}
 		batch
 	}
 
 	fn build(self) -> Batch {
-		let mut columns = HashMap::new();
+		let mut columns = Vec::new();
 		for (k, v) in self.columns {
 			assert_eq!(v.len(), self.len);
-			columns.insert(k, v.build());
+			columns.push((k, v.build()));
 		}
 		let include = vec![true; self.len];
 
@@ -113,14 +132,41 @@ impl BatchBuilder {
 
 #[derive(Debug, Clone)]
 pub struct Batch {
-	columns: HashMap<String, Column>,
+	columns: Vec<(String, Column)>,
 	include: Vec<bool>,
 	len: usize,
 }
 
 impl Batch {
+
+	pub fn as_pretty_string(&self) -> String {
+		use std::fmt::Write;
+		let mut s = String::new();
+		for i in 0..self.include.len() {
+			if self.include[i] {
+				for (name, column) in self.columns.iter() {
+					match column {
+						Column::U64(x) => {
+							write!(&mut s, "{}: {}, ", name, x[i]).unwrap();
+						},
+						Column::I64(x) => {
+							write!(&mut s, "{}: {}, ", name, x[i]).unwrap();
+						},
+					}
+				}
+			}
+			write!(&mut s, "\n");
+		}
+		s
+	}
+
 	pub fn get_column(&self, name: &str) -> Option<Column> {
-		Some((*self.columns.get(name)?).clone())
+		for (k, v) in self.columns.iter() {
+			if k == name {
+				return Some(v.clone())
+			}
+		}
+		None
 	}
 
 	pub fn len(&self) -> usize {
@@ -160,6 +206,7 @@ impl UserPlan {
 
 pub enum Operator {
 	ReadFromPerfEventArray(ReadFromPerfEventArray),
+	ReadCountFromPerCpuHash(ReadCountFromPerCpuHash),
 	Noop(Noop),
 	PrintData(PrintData),
 	Select(Select),
@@ -169,6 +216,7 @@ pub enum Operator {
 impl Operator {
 	pub fn next_batch(&mut self) -> Option<Batch> {
 		match self {
+			Operator::ReadCountFromPerCpuHash(x) => x.next_batch(),
 			Operator::ReadFromPerfEventArray(x) => x.next_batch(),
 			Operator::Noop(x) => x.next_batch(),
 			Operator::PrintData(x) => x.next_batch(),
@@ -279,23 +327,89 @@ impl Noop {
 	}
 }
 
-pub struct ReadFromBpfHashMap {
+fn read_count_percpu_hash(map: MapHandle, interval: Duration, tx: Sender<Batch>) {
+	let mut last_count = HashMap::new();
+	loop {
+		thread::sleep(Duration::from_secs(1));
+		let now = SystemTime::now()
+			.duration_since(SystemTime::UNIX_EPOCH)
+			.unwrap()
+			.as_micros() as u64;
+		let mut tmp_vec = Vec::new();
+		for k in map.keys() {
+			let read_values: Vec<Vec<u8>> =
+				map.lookup_percpu(&k, MapFlags::ANY).unwrap().unwrap();
+			let mut value = 0;
+			for read_value in read_values {
+				value += u64::from_ne_bytes(read_value.try_into().unwrap());
+			}
+			let key = u64::from_ne_bytes(k.try_into().unwrap());
+			let last_value = last_count.entry(key).or_insert(0);
+			if value > *last_value {
+				tmp_vec.push((key, value - *last_value));
+				*last_value = value;
+			}
+		}
+
+		let len = tmp_vec.len();
+		let mut time_vec = Vec::new();
+		let mut key_vec = Vec::new();
+		let mut value_vec = Vec::new();
+
+		for (k, v) in tmp_vec {
+			time_vec.push(now);
+			key_vec.push(k);
+			value_vec.push(v);
+		}
+
+		let mut columns: Vec<(String, Column)> = Vec::new();
+		columns.push(("time".into(), Column::U64(time_vec.into())));
+		columns.push(("system_call".into(), Column::U64(key_vec.into())));
+		columns.push(("count".into(), Column::U64(value_vec.into())));
+
+		let batch = Batch {
+			columns,
+			include: vec![true; len],
+			len,
+		};
+		tx.send(batch).unwrap();
+	}
+}
+
+struct PerCpuHash {
+	map: Map
+}
+
+/*
+ * Safety: This is only used in one thread and is read every Duration
+ */
+unsafe impl Send for PerCpuHash {}
+unsafe impl Sync for PerCpuHash {}
+
+pub struct ReadCountFromPerCpuHash {
 	rx: Receiver<Batch>,
 	tx: Sender<Batch>,
 }
 
-impl ReadFromBpfHashMap {
-	pub fn new(
-		map: &mut Map,
-		item_t: &Kind,
-		buffer_t: &Kind,
-		schema: &Schema,
-		interval: Duration,
-	) -> Self {
-		unimplemented!()
+impl ReadCountFromPerCpuHash {
+	pub fn new(map: &Map, interval: Duration) -> Self {
+		let (tx, rx) = unbounded();
+		let map = MapHandle::try_clone(map).unwrap();
 
-		//let (tx, rx) = unbounded();
-		//let (parser_tx, parser_rx): (Sender<Vec<u8>>, _) = unbounded();
+		let tx_clone = tx.clone();
+		thread::spawn(move || {
+			read_count_percpu_hash(map, interval, tx_clone);
+		});
+
+		Self { tx, rx }
+	}
+
+	pub fn next_batch(&mut self) -> Option<Batch> {
+		Some(self.rx.recv().unwrap())
+	}
+
+	pub fn to_op(self) -> Operator {
+		Operator::ReadCountFromPerCpuHash(self)
 	}
 }
 

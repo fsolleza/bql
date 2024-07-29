@@ -3,21 +3,21 @@ mod syscall;
 
 use anyhow::bail;
 use anyhow::Result;
+use chrono::prelude::*;
 use clap::Parser;
 use crossbeam::channel::{bounded, Receiver, Sender};
 use lazy_static::*;
 use libbpf_rs::skel::OpenSkel;
 use libbpf_rs::skel::Skel;
 use libbpf_rs::skel::SkelBuilder;
-use libbpf_rs::PerfBufferBuilder;
 use libbpf_rs::MapFlags;
-use std::process;
-use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering::SeqCst};
-use std::thread;
-use syscall::SyscallEventBuffer;
-use std::time::{self, Duration};
-use chrono::prelude::*;
+use libbpf_rs::PerfBufferBuilder;
 use std::collections::HashMap;
+use std::process;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+use std::thread;
+use std::time::{self, Duration};
+use syscall::SyscallEventBuffer;
 
 mod syscall_filter {
 	include!(concat!(env!("OUT_DIR"), "/syscall_histogram.skel.rs"));
@@ -66,32 +66,33 @@ fn attach_and_run(target_pid: u32) -> Result<()> {
 	open_skel.rodata().target_pid = target_pid;
 	let mut skel = open_skel.load()?;
 	skel.attach()?;
-    let mut value: usize  = 0;
+	let mut value: usize = 0;
 	let mut last_count = HashMap::new();
-    loop {
-        thread::sleep(Duration::from_secs(1));
-        let mut maps_mut = skel.maps_mut();
-        let map: _=maps_mut.syscall_map();
-        let utc: DateTime<Utc> = Utc::now();
+	loop {
+		thread::sleep(Duration::from_secs(1));
+		let mut maps_mut = skel.maps_mut();
+		let map: _ = maps_mut.syscall_map();
+		let utc: DateTime<Utc> = Utc::now();
 		let mut v = Vec::new();
-        for k in map.keys() {
-            let read_values: Vec<Vec<u8>> = map.lookup_percpu(&k, MapFlags::ANY).unwrap().unwrap();
+		for k in map.keys() {
+			let read_values: Vec<Vec<u8>> =
+				map.lookup_percpu(&k, MapFlags::ANY).unwrap().unwrap();
 			let mut value = 0;
 			for read_value in read_values {
 				value += i32::from_ne_bytes(read_value.try_into().unwrap());
 			}
-            let key = i32::from_ne_bytes(k.try_into().unwrap());
+			let key = i32::from_ne_bytes(k.try_into().unwrap());
 			let last_value = last_count.entry(key).or_insert(0);
 			if value > *last_value {
 				v.push((utc, key, value - *last_value));
 				*last_value = value;
 			}
-        }
+		}
 
 		for i in v {
 			println!("{:?}", i);
 		}
-    }
+	}
 }
 
 #[derive(Parser, Debug, Clone)]

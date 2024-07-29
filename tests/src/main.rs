@@ -1,6 +1,6 @@
 use bql_lib::codegen::{BinaryOperator, Expr, Kind};
 use bql_lib::kernel_plan::{
-	Aggregation, AsKernelVariableSource, BpfContext, BpfHashMapGroupBy,
+	Aggregation, AsKernelVariableSource, BpfContext, BpfPerCpuHashGroupBy,
 	CurrentTaskField, KernelBpfMap, KernelContextBuilder, KernelPlan,
 	KernelVariable, PerfMapBufferAndOutput, SelectKernelData, SysEnterField,
 	Timestamp, TupleBuilder,
@@ -8,6 +8,7 @@ use bql_lib::kernel_plan::{
 use bql_lib::schema::{Schema, SchemaBuilder, SchemaKind};
 use bql_lib::user_plan::{
 	PrintData, ReadFromPerfEventArray, Select, SinkData, UserPlan, UserScalar,
+	ReadCountFromPerCpuHash,
 };
 use bql_lib::user_plan_helpers::*;
 use clang_format::clang_format;
@@ -79,17 +80,34 @@ fn q2() {
 	};
 
 	let groupby =
-		BpfHashMapGroupBy::new(&ctx, &var, Aggregation::Count).into_op();
+		BpfPerCpuHashGroupBy::new(&ctx, &var, Aggregation::Count).into_op();
 
 	let mut plan = ctx.plan();
 	plan.add_op(remove_this_pid_op);
 	plan.add_op(build_groupby_key_op);
-	plan.add_op(groupby);
+	plan.add_op(groupby.clone());
 
 	let mut obj = plan.compile_and_load();
 
 	//let code = plan.emit_code();
 	//println!("{}", clang_format(&code.as_str()).unwrap());
+
+	let groupby_map = groupby.groupby_map().unwrap();
+	let map = obj.map(groupby_map.name()).unwrap();
+
+	let read_op = ReadCountFromPerCpuHash::new(map, Duration::from_secs(1)).to_op();
+	let sink_op = SinkData::new(read_op);
+	let rx = sink_op.receiver();
+	let sink_op = sink_op.to_op();
+
+	let mut user_plan = UserPlan::new(obj, sink_op);
+	thread::spawn(move || {
+		while let Ok(x) = rx.recv() {
+			COUNT.fetch_add(x.include_count(), SeqCst);
+			println!("{}", x.as_pretty_string());
+		}
+	});
+	user_plan.execute();
 }
 
 fn q1(pid: u64, syscall_num: u64) {
