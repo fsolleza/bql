@@ -674,14 +674,14 @@ impl BpfPerCpuHashGroupBy {
 		v
 	}
 
+
 	fn emit_execution_code(&self) -> Vec<CodeUnit> {
 		// int* value = bpf_map_lookup_elem(&syscall_map, &syscall_number);
 		// if (!value) {
-		//     int one = 1;
-		//     bpf_map_update_elem(&syscall_map, &syscall_number, &one, BPF_ANY);
+		// 	int one = 1;
+		// 	bpf_map_update_elem(&syscall_map, &syscall_number, &one, BPF_ANY);
 		// } else {
-		//     int val = *value + 1;
-		//     bpf_map_update_elem(&syscall_map, &syscall_number, &val , BPF_ANY);
+		// 	*value += 1;
 		// }
 
 		let bpf_map_lookup_elem = Function::with_name("bpf_map_lookup_elem");
@@ -704,13 +704,8 @@ impl BpfPerCpuHashGroupBy {
 		]);
 		let assign = entry_ptr.lvalue().assign(&expr);
 
-		let updated_var = Variable::new(&Kind::uint64_t(), None);
-		let updated_var_assign = updated_var.lvalue().assign(&Expr::uint(1));
-
 		result.push(entry_ptr.definition().into());
 		result.push(assign.into());
-		result.push(updated_var.definition().into());
-		result.push(updated_var_assign.into());
 
 		/*
 		 * Check if entry is null
@@ -718,20 +713,34 @@ impl BpfPerCpuHashGroupBy {
 		 *     updated_var += *value;
 		 * }
 		 */
+		let mut check_null = Expr::unary(entry_ptr.expr(), UnaryOperator::Not);
 		let mut check_block = ScopeBlock::new();
-		let assign = updated_var.lvalue().add_assign(&entry_ptr.expr().deref());
-		check_block.push(assign.into());
-
-		result.push(IfBlock::from_parts(entry_ptr.expr(), check_block).into());
-
+		let one = Variable::new(&Kind::uint64_t(), None);
+		let assign = one.lvalue().assign(&Expr::uint(1));
 		let expr = bpf_map_update_elem.call(vec![
 			self.hashmap.map.expr().reference(),
 			self.key.expr().reference(),
-			updated_var.expr().reference(),
+			one.expr().reference(),
 			Scalar::cconst("BPF_ANY").into_expr(),
 		]);
+		check_block.push(one.definition().into());
+		check_block.push(assign.into());
+		check_block.push(expr.into());
 
-		result.push(expr.into());
+		result.push(IfBlock::from_parts(check_null, check_block).into());
+
+		let mut else_block = ScopeBlock::new();
+		else_block.push(entry_ptr.lvalue().deref_ptr().add_assign(&Expr::uint(1)).into());
+		result.push(ElseBlock::new(else_block).into());
+
+		//let expr = bpf_map_update_elem.call(vec![
+		//	self.hashmap.map.expr().reference(),
+		//	self.key.expr().reference(),
+		//	updated_var.expr().reference(),
+		//	Scalar::cconst("BPF_ANY").into_expr(),
+		//]);
+
+		//result.push(expr.into());
 
 		result
 	}
@@ -1074,7 +1083,7 @@ mod test {
 		};
 
 		let groupby =
-			BpfHashMapGroupBy::new(&ctx, &var, Aggregation::Count).into_op();
+			BpfPerCpuHashGroupBy::new(&ctx, &var, Aggregation::Count).into_op();
 
 		let mut build_tuple = TupleBuilder::new();
 		build_tuple.add_field(

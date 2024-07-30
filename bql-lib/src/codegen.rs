@@ -1697,11 +1697,21 @@ impl Lvalue {
 		}
 	}
 
+	pub fn deref_ptr(self) -> Self {
+		let inner = InnerLvalue::Deref(LvalueDeref {
+			parent: Box::new(self),
+		});
+		Self {
+			inner: inner.into(),
+		}
+	}
+
 	pub fn gen_expression(&self) -> String {
 		match &*self.inner {
 			InnerLvalue::Variable(x) => x.gen_expression(),
 			InnerLvalue::Member(x) => format!("{}", x.gen_expression()),
 			InnerLvalue::Offset(x) => format!("{}", x.gen_expression()),
+			InnerLvalue::Deref(x) => format!("{}", x.gen_expression()),
 		}
 	}
 
@@ -1735,6 +1745,7 @@ pub enum InnerLvalue {
 	Variable(Variable),
 	Member(LvalueMember),
 	Offset(LvalueOffset),
+	Deref(LvalueDeref),
 }
 
 //impl InnerLvalue {
@@ -1815,6 +1826,17 @@ impl LvalueMember {
 		}
 	}
 }
+
+pub struct LvalueDeref {
+	parent: Box<Lvalue>,
+}
+
+impl LvalueDeref {
+	pub fn gen_expression(&self) -> String {
+		format!("*{}", self.parent.gen_expression())
+	}
+}
+
 
 #[derive(Clone)]
 pub enum LvalueAssignmentOperator {
